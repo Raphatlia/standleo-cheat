@@ -1,20 +1,31 @@
-name: Build Cheat.dylib
+name: Build iOS Cheat Dylib
 
-on: [push]
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # Позволяет запустить сборку вручную кнопкой
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v2
-    
-    - name: Build dylib
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Build Dylib
       run: |
-        clang -dynamiclib -arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
-              -miphoneos-version-min=14.0 Cheat.c -o Cheat.dylib
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v2
+        # Компилируем наш Cheat.mm в динамическую библиотеку для arm64 (iPhone)
+        clang++ -dynamiclib \
+          -arch arm64 \
+          -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+          -miphoneos-version-min=14.0 \
+          -fobjc-arc \
+          Cheat.mm \
+          -o Cheat.dylib \
+          -framework UIKit -framework Foundation
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
       with:
         name: Cheat.dylib
         path: Cheat.dylib
