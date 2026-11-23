@@ -7,22 +7,30 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
     - uses: actions/checkout@v4
-
-    - name: Build Cheat.dylib
+      with:
+        submodules: recursive
+    
+    - name: Build Cheat.dylib with ImGui
       run: |
+        # Компилируем ImGui + наш код
         clang++ -dynamiclib \
           -arch arm64 \
           -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
           -miphoneos-version-min=14.0 \
           -fobjc-arc \
+          -std=c++17 \
+          -I antisocial_ui/imgui \
+          antisocial_ui/imgui/imgui.cpp \
+          antisocial_ui/imgui/imgui_draw.cpp \
+          antisocial_ui/imgui/imgui_tables.cpp \
+          antisocial_ui/imgui/imgui_widgets.cpp \
           Cheat.mm \
           -o Cheat.dylib \
-          -framework UIKit -framework Foundation
-        ls -la Cheat.dylib
-
+          -framework UIKit -framework Foundation -framework Metal -framework MetalKit
+    
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
