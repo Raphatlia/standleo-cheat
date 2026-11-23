@@ -1,0 +1,3 @@
+[submodule "antisocial"]
+	path = antisocial
+	url = https://github.com/mistraced/antisocial.git
