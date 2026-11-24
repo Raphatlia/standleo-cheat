@@ -1,16 +1,46 @@
-name: Build
-on: [push, workflow_dispatch]
+name: Build iOS Cheat Dylib
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Compile
+
+    - name: Show Xcode version
       run: |
-        clang++ -dynamiclib -arch arm64 \
+        xcode-select -p
+        xcrun --sdk iphoneos --show-sdk-path
+        clang++ --version
+
+    - name: Compile Cheat.dylib
+      run: |
+        set -e
+        clang++ -dynamiclib \
+          -arch arm64 \
           -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
-          -miphoneos-version-min=14.0 -fobjc-arc \
-          Cheat.mm -o Cheat.dylib \
-          -framework UIKit -framework Foundation
-    - uses: actions/upload-artifact@v4
-      with: { name: Cheat.dylib, path: Cheat.dylib }
+          -miphoneos-version-min=14.0 \
+          -fobjc-arc \
+          -O2 \
+          Cheat.mm \
+          -o Cheat.dylib \
+          -framework UIKit \
+          -framework Foundation \
+          2>&1 | tee build.log
+        ls -la Cheat.dylib
+        file Cheat.dylib
+
+    - name: Upload Artifact
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Cheat.dylib
+        path: Cheat.dylib
+
+    - name: Show build log on failure
+      if: failure()
+      run: cat build.log || echo "No log"
