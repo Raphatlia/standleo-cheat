@@ -5,7 +5,6 @@
 @end
 
 @implementation CheatManager
-
 static CheatManager *g = nil;
 + (CheatManager*)shared { if(!g) g=[[CheatManager alloc] init]; return g; }
 
@@ -40,7 +39,6 @@ static CheatManager *g = nil;
     [win addSubview:b];
     self.button = b;
 }
-
 - (void)tap:(UIButton*)x { NSLog(@"[Cheat] tap"); }
 - (void)pan:(UIPanGestureRecognizer*)r {
     CGPoint t=[r translationInView:r.view.superview];
