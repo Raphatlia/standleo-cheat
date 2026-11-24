@@ -30,6 +30,7 @@ jobs:
           -o Cheat.dylib \
           -framework UIKit \
           -framework Foundation \
+          -framework CoreGraphics \
           2>&1 | tee build.log
         ls -la Cheat.dylib
         file Cheat.dylib
