@@ -22,40 +22,33 @@ jobs:
         set -e
         SDK=$(xcrun --sdk iphoneos --show-sdk-path)
         
-        # 1. Компилируем ImGui core (C++ файлы, без ARC)
+        # 1. ImGui core (C++)
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
-          -I./imgui -I./imgui/backends \
-          -std=c++11 \
+          -I./imgui -I./imgui/backends -std=c++11 \
           imgui/imgui.cpp -o imgui.o
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
-          -I./imgui -I./imgui/backends \
-          -std=c++11 \
+          -I./imgui -I./imgui/backends -std=c++11 \
           imgui/imgui_draw.cpp -o imgui_draw.o
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
-          -I./imgui -I./imgui/backends \
-          -std=c++11 \
+          -I./imgui -I./imgui/backends -std=c++11 \
           imgui/imgui_tables.cpp -o imgui_tables.o
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
-          -I./imgui -I./imgui/backends \
-          -std=c++11 \
+          -I./imgui -I./imgui/backends -std=c++11 \
           imgui/imgui_widgets.cpp -o imgui_widgets.o
         
-        # 2. Компилируем Metal бэкенд БЕЗ ARC (он на чистом ObjC)
+        # 2. Metal бэкенд (без ARC)
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
           -I./imgui -I./imgui/backends \
-          -fno-objc-arc \
-          -Wno-deprecated-declarations \
+          -fno-objc-arc -Wno-deprecated-declarations \
           imgui/backends/imgui_impl_metal.mm -o imgui_impl_metal.o
         
-        # 3. Компилируем наш Cheat.mm С ARC
+        # 3. Cheat.mm (с ARC)
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
           -I./imgui -I./imgui/backends \
-          -fobjc-arc \
-          -std=c++11 \
-          -Wno-deprecated-declarations \
+          -fobjc-arc -std=c++11 -Wno-deprecated-declarations \
           Cheat.mm -o Cheat.o
         
-        # 4. Линкуем всё вместе
+        # 4. Линковка ← ДОБАВЛЕН QuartzCore
         clang++ -dynamiclib -arch arm64 \
           -isysroot $SDK \
           -miphoneos-version-min=14.0 \
@@ -67,6 +60,7 @@ jobs:
           -framework CoreGraphics \
           -framework Metal \
           -framework MetalKit \
+          -framework QuartzCore \
           2>&1 | tee build.log
         
         ls -la Cheat.dylib
