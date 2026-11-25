@@ -3,14 +3,10 @@
 #import <QuartzCore/QuartzCore.h>
 #import "imgui.h"
 #import "imgui_impl_metal.h"
-#include "medium.hpp"
 
 static bool g_wallbang = true;
 static bool g_norecoil = true;
 static bool g_bunnyhop = false;
-static bool g_esp_box = true;
-static bool g_esp_health = true;
-static bool g_esp_nickname = true;
 
 @interface CheatHostView : UIView
 @end
@@ -92,14 +88,12 @@ static CheatManager *sharedInstance = nil;
     CGFloat scale = [UIScreen mainScreen].scale;
     CGSize screenSize = keyWindow.bounds.size;
     
-    // Создаём хост-вью для меню (420x360)
-    self.hostView = [[CheatHostView alloc] initWithFrame:CGRectMake(10, 120, 420, 360)];
+    self.hostView = [[CheatHostView alloc] initWithFrame:CGRectMake(10, 120, 380, 320)];
     self.hostView.backgroundColor = [UIColor clearColor];
     self.hostView.hidden = YES;
     self.hostView.userInteractionEnabled = NO;
     [keyWindow addSubview:self.hostView];
     
-    // Metal инициализация
     self.device = MTLCreateSystemDefaultDevice();
     self.commandQueue = [self.device newCommandQueue];
     
@@ -110,54 +104,38 @@ static CheatManager *sharedInstance = nil;
     self.metalLayer.opaque = NO;
     self.metalLayer.backgroundColor = [UIColor clearColor].CGColor;
     self.metalLayer.contentsScale = scale;
-    self.metalLayer.drawableSize = CGSizeMake(420 * scale, 360 * scale);
+    self.metalLayer.drawableSize = CGSizeMake(380 * scale, 320 * scale);
     
-    // ImGui инициализация
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(420, 360);
+    io.DisplaySize = ImVec2(380, 320);
     io.DisplayFramebufferScale = ImVec2(scale, scale);
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     
-    // Загружаем шрифт Instrument Sans
-    io.Fonts->AddFontFromMemoryTTF(
-        instrument_sans_medium_ttf,
-        sizeof(instrument_sans_medium_ttf),
-        13.0f * 2.0f,
-        nullptr,
-        io.Fonts->GetGlyphRangesCyrillic()
-    );
-    io.FontGlobalScale = 0.5f;
-    
     ImGui_ImplMetal_Init(self.device);
     
-    // Стилизация (тёмная тема с фиолетовым акцентом)
+    // Тёмная тема
     ImGuiStyle &style = ImGui::GetStyle();
-    style.WindowRounding = 12.0f;
-    style.ChildRounding = 10.0f;
-    style.FrameRounding = 8.0f;
-    style.TabRounding = 8.0f;
-    style.WindowPadding = ImVec2(14, 14);
-    style.ItemSpacing = ImVec2(10, 8);
+    style.WindowRounding = 10.0f;
+    style.ChildRounding = 8.0f;
+    style.FrameRounding = 6.0f;
+    style.WindowPadding = ImVec2(12, 12);
+    style.ItemSpacing = ImVec2(8, 6);
     style.WindowBorderSize = 1.0f;
-    style.ChildBorderSize = 0.0f;
     
     ImVec4 *colors = style.Colors;
-    colors[ImGuiCol_Text] = ImVec4(0.92f, 0.92f, 0.96f, 1.0f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.42f, 0.42f, 0.52f, 1.0f);
-    colors[ImGuiCol_WindowBg] = ImVec4(0.04f, 0.04f, 0.07f, 0.98f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-    colors[ImGuiCol_Border] = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);
-    colors[ImGuiCol_CheckMark] = ImVec4(0.49f, 0.36f, 1.0f, 1.0f);
-    colors[ImGuiCol_SliderGrab] = ImVec4(0.49f, 0.36f, 1.0f, 1.0f);
-    colors[ImGuiCol_Separator] = ImVec4(0.15f, 0.15f, 0.22f, 1.0f);
+    colors[ImGuiCol_Text] = ImVec4(0.90f, 0.90f, 0.90f, 1.0f);
+    colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.05f, 0.08f, 0.95f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.08f, 0.08f, 0.12f, 0.90f);
+    colors[ImGuiCol_Border] = ImVec4(0.20f, 0.20f, 0.25f, 1.0f);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.50f, 0.40f, 1.0f, 1.0f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.50f, 0.40f, 1.0f, 1.0f);
     
     self.isReady = YES;
     
-    // Кнопка переключения меню (⚡ в правом верхнем углу)
     self.toggleButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.toggleButton.frame = CGRectMake(screenSize.width - 80, 60, 60, 60);
-    self.toggleButton.backgroundColor = [UIColor colorWithRed:0.49 green:0.36 blue:1.0 alpha:0.85];
+    self.toggleButton.backgroundColor = [UIColor colorWithRed:0.50 green:0.40 blue:1.0 alpha:0.85];
     self.toggleButton.layer.cornerRadius = 30;
     self.toggleButton.layer.borderWidth = 2;
     self.toggleButton.layer.borderColor = [UIColor whiteColor].CGColor;
@@ -166,7 +144,6 @@ static CheatManager *sharedInstance = nil;
     [self.toggleButton addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
     [keyWindow addSubview:self.toggleButton];
     
-    // Запускаем рендер-цикл
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(render)];
     [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     
@@ -199,285 +176,49 @@ static CheatManager *sharedInstance = nil;
     ImGui_ImplMetal_NewFrame(renderPass);
     ImGui::NewFrame();
     
-    // Главное окно меню
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(420, 360), ImGuiCond_Always);
-    ImGui::Begin("##main_window", nullptr,
-                 ImGuiWindowFlags_NoResize |
-                 ImGuiWindowFlags_NoCollapse |
-                 ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoTitleBar);
+    ImGui::SetNextWindowSize(ImVec2(380, 320), ImGuiCond_Always);
+    ImGui::Begin("##main", nullptr,
+                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
     
-    // Логотип в сайдбаре
-    ImVec2 logoPos = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddCircleFilled(
-        ImVec2(logoPos.x + 50, logoPos.y + 24),
-        18,
-        IM_COL32(124, 92, 255, 255)
-    );
-    ImGui::SetCursorScreenPos(ImVec2(logoPos.x + 44, logoPos.y + 14));
-    ImGui::Text("A");
-    ImGui::Spacing();
+    // Сайдбар
+    ImGui::BeginChild("sidebar", ImVec2(100, 0), true);
+    ImGui::Text("STANDLEO");
+    ImGui::Separator();
     ImGui::Spacing();
     
-    // Сайдбар с вкладками
-    const char *tabs[] = {"ESP", "Chams", "World", "Ragebot", "Misc", "Configs"};
-    int tabCount = 6;
-    
-    for (int i = 0; i < tabCount; i++) {
+    const char *tabs[] = {"Combat", "Visual", "Misc"};
+    for (int i = 0; i < 3; i++) {
         bool isSelected = (self.selectedTab == i);
-        ImVec2 tabPos = ImGui::GetCursorScreenPos();
-        
-        // Подсветка активной вкладки
-        if (isSelected) {
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                tabPos,
-                ImVec2(tabPos.x + 100, tabPos.y + 30),
-                IM_COL32(28, 28, 44, 255),
-                8.0f
-            );
-            ImGui::GetWindowDrawList()->AddRectFilled(
-                ImVec2(tabPos.x, tabPos.y + 6),
-                ImVec2(tabPos.x + 3, tabPos.y + 24),
-                IM_COL32(124, 92, 255, 255),
-                2.0f
-            );
-        }
-        
-        ImGui::SetCursorScreenPos(ImVec2(tabPos.x + 12, tabPos.y + 7));
-        if (ImGui::Selectable(tabs[i], isSelected, 0, ImVec2(100, 30))) {
+        if (ImGui::Selectable(tabs[i], isSelected, 0, ImVec2(80, 30))) {
             self.selectedTab = i;
         }
-        ImGui::Spacing();
     }
-    
+    ImGui::EndChild();
     ImGui::SameLine();
     
-    // Контентная область
-    ImGui::BeginGroup();
+    // Контент
+    ImGui::BeginChild("content", ImVec2(0, 0), true);
     
-    if (self.selectedTab == 0) { // ESP
-        // Карточка 1: ESP Demo
-        ImVec2 card1Pos = ImGui::GetCursorScreenPos();
-        float card1Width = 200;
-        float card1Height = 150;
-        
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            card1Pos,
-            ImVec2(card1Pos.x + card1Width, card1Pos.y + card1Height),
-            IM_COL32(16, 16, 26, 255),
-            10.0f
-        );
-        ImGui::GetWindowDrawList()->AddRect(
-            card1Pos,
-            ImVec2(card1Pos.x + card1Width, card1Pos.y + card1Height),
-            IM_COL32(30, 30, 46, 255),
-            10.0f,
-            0,
-            1.0f
-        );
-        
-        ImGui::SetCursorScreenPos(ImVec2(card1Pos.x + 12, card1Pos.y + 10));
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.92f, 1.0f), "ESP Demo");
-        ImGui::SetCursorScreenPos(ImVec2(card1Pos.x + 12, card1Pos.y + 34));
-        
-        // Toggle: Offscreen
-        ImVec2 togglePos = ImGui::GetCursorScreenPos();
-        float toggleWidth = card1Width - 24;
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            togglePos,
-            ImVec2(togglePos.x + toggleWidth, togglePos.y + 36),
-            IM_COL32(18, 18, 26, 255),
-            8.0f
-        );
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 10));
-        ImGui::Text("Offscreen");
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 24));
-        ImGui::TextDisabled("Shows enemies that are out of visibility");
-        
-        float tx = togglePos.x + toggleWidth - 44;
-        float ty = togglePos.y + 10;
-        ImDrawList *dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(
-            ImVec2(tx, ty),
-            ImVec2(tx + 36, ty + 18),
-            g_esp_box ? IM_COL32(124, 92, 255, 255) : IM_COL32(40, 40, 55, 255),
-            9.0f
-        );
-        dl->AddCircleFilled(
-            ImVec2(g_esp_box ? tx + 27 : tx + 9, ty + 9),
-            7.0f,
-            IM_COL32(255, 255, 255, 255)
-        );
-        
-        ImGui::SetCursorScreenPos(togglePos);
-        if (ImGui::InvisibleButton("##esp_offscreen", ImVec2(toggleWidth, 36))) {
-            g_esp_box = !g_esp_box;
-        }
-        ImGui::Spacing();
-        
-        ImGui::SetCursorScreenPos(ImVec2(card1Pos.x, card1Pos.y + card1Height + 8));
-        
-        // Карточка 2: Preview
-        ImGui::SameLine();
-        ImVec2 card2Pos = ImGui::GetCursorScreenPos();
-        float card2Width = 180;
-        float card2Height = 150;
-        
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            card2Pos,
-            ImVec2(card2Pos.x + card2Width, card2Pos.y + card2Height),
-            IM_COL32(16, 16, 26, 255),
-            10.0f
-        );
-        ImGui::GetWindowDrawList()->AddRect(
-            card2Pos,
-            ImVec2(card2Pos.x + card2Width, card2Pos.y + card2Height),
-            IM_COL32(30, 30, 46, 255),
-            10.0f,
-            0,
-            1.0f
-        );
-        
-        ImGui::SetCursorScreenPos(ImVec2(card2Pos.x + 12, card2Pos.y + 10));
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.92f, 1.0f), "Preview");
-        ImGui::SetCursorScreenPos(ImVec2(card2Pos.x + 12, card2Pos.y + 34));
-        ImGui::TextDisabled("ESP preview placeholder");
-        ImGui::SetCursorScreenPos(ImVec2(card2Pos.x, card2Pos.y + card2Height + 8));
+    if (self.selectedTab == 0) {
+        ImGui::Text("Combat");
+        ImGui::Separator();
+        ImGui::Checkbox("Wallbang", &g_wallbang);
+        ImGui::Checkbox("NoRecoil", &g_norecoil);
     }
-    else if (self.selectedTab == 4) { // Misc
-        ImVec2 cardPos = ImGui::GetCursorScreenPos();
-        float cardWidth = 280;
-        float cardHeight = 150;
-        
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            cardPos,
-            ImVec2(cardPos.x + cardWidth, cardPos.y + cardHeight),
-            IM_COL32(16, 16, 26, 255),
-            10.0f
-        );
-        ImGui::GetWindowDrawList()->AddRect(
-            cardPos,
-            ImVec2(cardPos.x + cardWidth, cardPos.y + cardHeight),
-            IM_COL32(30, 30, 46, 255),
-            10.0f,
-            0,
-            1.0f
-        );
-        
-        ImGui::SetCursorScreenPos(ImVec2(cardPos.x + 12, cardPos.y + 10));
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.92f, 1.0f), "Combat & Movement");
-        ImGui::SetCursorScreenPos(ImVec2(cardPos.x + 12, cardPos.y + 34));
-        
-        // Toggle: Wallbang
-        ImVec2 togglePos = ImGui::GetCursorScreenPos();
-        float toggleWidth = cardWidth - 24;
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            togglePos,
-            ImVec2(togglePos.x + toggleWidth, togglePos.y + 36),
-            IM_COL32(18, 18, 26, 255),
-            8.0f
-        );
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 10));
-        ImGui::Text("Wallbang");
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 24));
-        ImGui::TextDisabled("Shoot through walls");
-        
-        float tx = togglePos.x + toggleWidth - 44;
-        float ty = togglePos.y + 10;
-        ImDrawList *dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(
-            ImVec2(tx, ty),
-            ImVec2(tx + 36, ty + 18),
-            g_wallbang ? IM_COL32(124, 92, 255, 255) : IM_COL32(40, 40, 55, 255),
-            9.0f
-        );
-        dl->AddCircleFilled(
-            ImVec2(g_wallbang ? tx + 27 : tx + 9, ty + 9),
-            7.0f,
-            IM_COL32(255, 255, 255, 255)
-        );
-        
-        ImGui::SetCursorScreenPos(togglePos);
-        if (ImGui::InvisibleButton("##wallbang", ImVec2(toggleWidth, 36))) {
-            g_wallbang = !g_wallbang;
-        }
-        ImGui::Spacing();
-        
-        // Toggle: NoRecoil
-        togglePos = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            togglePos,
-            ImVec2(togglePos.x + toggleWidth, togglePos.y + 36),
-            IM_COL32(18, 18, 26, 255),
-            8.0f
-        );
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 10));
-        ImGui::Text("NoRecoil");
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 24));
-        ImGui::TextDisabled("Zero recoil");
-        
-        tx = togglePos.x + toggleWidth - 44;
-        ty = togglePos.y + 10;
-        dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(
-            ImVec2(tx, ty),
-            ImVec2(tx + 36, ty + 18),
-            g_norecoil ? IM_COL32(124, 92, 255, 255) : IM_COL32(40, 40, 55, 255),
-            9.0f
-        );
-        dl->AddCircleFilled(
-            ImVec2(g_norecoil ? tx + 27 : tx + 9, ty + 9),
-            7.0f,
-            IM_COL32(255, 255, 255, 255)
-        );
-        
-        ImGui::SetCursorScreenPos(togglePos);
-        if (ImGui::InvisibleButton("##norecoil", ImVec2(toggleWidth, 36))) {
-            g_norecoil = !g_norecoil;
-        }
-        ImGui::Spacing();
-        
-        // Toggle: BunnyHop
-        togglePos = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddRectFilled(
-            togglePos,
-            ImVec2(togglePos.x + toggleWidth, togglePos.y + 36),
-            IM_COL32(18, 18, 26, 255),
-            8.0f
-        );
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 10));
-        ImGui::Text("BunnyHop");
-        ImGui::SetCursorScreenPos(ImVec2(togglePos.x + 12, togglePos.y + 24));
-        ImGui::TextDisabled("Auto jump");
-        
-        tx = togglePos.x + toggleWidth - 44;
-        ty = togglePos.y + 10;
-        dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(
-            ImVec2(tx, ty),
-            ImVec2(tx + 36, ty + 18),
-            g_bunnyhop ? IM_COL32(124, 92, 255, 255) : IM_COL32(40, 40, 55, 255),
-            9.0f
-        );
-        dl->AddCircleFilled(
-            ImVec2(g_bunnyhop ? tx + 27 : tx + 9, ty + 9),
-            7.0f,
-            IM_COL32(255, 255, 255, 255)
-        );
-        
-        ImGui::SetCursorScreenPos(togglePos);
-        if (ImGui::InvisibleButton("##bunnyhop", ImVec2(toggleWidth, 36))) {
-            g_bunnyhop = !g_bunnyhop;
-        }
-        
-        ImGui::SetCursorScreenPos(ImVec2(cardPos.x, cardPos.y + cardHeight + 8));
+    else if (self.selectedTab == 1) {
+        ImGui::Text("Visual");
+        ImGui::Separator();
+        ImGui::Text("Coming soon");
     }
     else {
-        ImGui::TextDisabled("%s: coming soon", tabs[self.selectedTab]);
+        ImGui::Text("Misc");
+        ImGui::Separator();
+        ImGui::Checkbox("BunnyHop", &g_bunnyhop);
     }
     
-    ImGui::EndGroup();
+    ImGui::EndChild();
     ImGui::End();
     
     ImGui::Render();
