@@ -1,8 +1,15 @@
 #import <UIKit/UIKit.h>
+#import <Metal/Metal.h>
+#import <MetalKit/MetalKit.h>
+
+// Минимальный ImGui (упрощённая версия для теста)
+// В реальности нужно подключить полные исходники из antisocial_ui
 
 @interface CheatManager : NSObject
 @property (nonatomic, strong) UIButton *button;
 @property (nonatomic, strong) UIView *panel;
+@property (nonatomic, assign) BOOL wallbangEnabled;
+@property (nonatomic, assign) BOOL noRecoilEnabled;
 @end
 
 @implementation CheatManager
@@ -31,7 +38,6 @@ static CheatManager *g = nil;
     UIWindow *win = [self findWindow];
     if (!win) return;
 
-    // ВИДИМАЯ кнопка в правом верхнем углу (не мешает игре!)
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(win.bounds.size.width-80, 60, 60, 60);
     b.backgroundColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:0.75];
@@ -68,9 +74,10 @@ static CheatManager *g = nil;
     title.font = [UIFont boldSystemFontOfSize:16];
     [p addSubview:title];
 
-    [self addSwitch:p label:@"Wallbang" y:45 tag:1];
-    [self addSwitch:p label:@"NoRecoil" y:80 tag:2];
-    [self addSwitch:p label:@"BunnyHop" y:115 tag:3];
+    // Переключатели (пока декоративные, патчи всегда активны)
+    [self addSwitch:p label:@"Wallbang (всегда вкл)" y:45 tag:1];
+    [self addSwitch:p label:@"NoRecoil (всегда вкл)" y:80 tag:2];
+    [self addSwitch:p label:@"ESP (скоро)" y:115 tag:3];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     close.frame = CGRectMake(75, 165, 120, 36);
@@ -91,11 +98,16 @@ static CheatManager *g = nil;
     [p addSubview:l];
     UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(205,y,50,28)];
     sw.tag = tag;
+    sw.on = YES; // Включено по умолчанию (патчи всегда активны)
+    sw.enabled = NO; // Нельзя выключить (пока)
     [sw addTarget:self action:@selector(onSwitch:) forControlEvents:UIControlEventValueChanged];
     [p addSubview:sw];
 }
 
-- (void)onSwitch:(UISwitch*)sw { NSLog(@"[Cheat] switch %ld = %d",(long)sw.tag,sw.on); }
+- (void)onSwitch:(UISwitch*)sw {
+    NSLog(@"[Cheat] switch %ld = %d", (long)sw.tag, sw.on);
+}
+
 - (void)hide:(UIButton*)x { [self.panel removeFromSuperview]; self.panel = nil; }
 
 - (void)pan:(UIPanGestureRecognizer*)r {
