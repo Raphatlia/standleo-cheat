@@ -1,15 +1,16 @@
 #import <UIKit/UIKit.h>
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
-
-// Минимальный ImGui (упрощённая версия для теста)
-// В реальности нужно подключить полные исходники из antisocial_ui
+#import "imgui.h"
+#import "imgui_impl_metal.h"
 
 @interface CheatManager : NSObject
 @property (nonatomic, strong) UIButton *button;
-@property (nonatomic, strong) UIView *panel;
-@property (nonatomic, assign) BOOL wallbangEnabled;
-@property (nonatomic, assign) BOOL noRecoilEnabled;
+@property (nonatomic, assign) BOOL showMenu;
+@property (nonatomic, strong) id<MTLDevice> device;
+@property (nonatomic, strong) id<MTLCommandQueue> commandQueue;
+@property (nonatomic, strong) CAMetalLayer *metalLayer;
+@property (nonatomic, assign) BOOL imguiInitialized;
 @end
 
 @implementation CheatManager
@@ -38,82 +39,76 @@ static CheatManager *g = nil;
     UIWindow *win = [self findWindow];
     if (!win) return;
 
+    // Инициализация Metal
+    self.device = MTLCreateSystemDefaultDevice();
+    self.commandQueue = [self.device newCommandQueue];
+    
+    // Создаём CAMetalLayer для ImGui
+    self.metalLayer = [CAMetalLayer layer];
+    self.metalLayer.device = self.device;
+    self.metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    self.metalLayer.framebufferOnly = YES;
+    self.metalLayer.frame = win.bounds;
+    self.metalLayer.contentsScale = [UIScreen mainScreen].scale;
+    [win.layer addSublayer:self.metalLayer];
+    
+    // Инициализация ImGui
+    ImGui::CreateContext();
+    ImGui_ImplMetal_Init(self.device);
+    self.imguiInitialized = YES;
+    
+    // Кнопка для открытия меню
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(win.bounds.size.width-80, 60, 60, 60);
     b.backgroundColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:0.75];
     b.layer.cornerRadius = 30;
-    b.layer.borderWidth = 2;
-    b.layer.borderColor = [UIColor whiteColor].CGColor;
     [b setTitle:@"⚙️" forState:UIControlStateNormal];
     b.titleLabel.font = [UIFont systemFontOfSize:26];
     [b addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventTouchUpInside];
-    [b addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)]];
     [win addSubview:b];
     self.button = b;
+    
+    NSLog(@"[Cheat] ImGui + Metal ready");
 }
 
 - (void)toggle:(UIButton*)x {
-    if (self.panel && self.panel.superview) {
-        [self.panel removeFromSuperview];
-        self.panel = nil;
-        return;
+    self.showMenu = !self.showMenu;
+    NSLog(@"[Cheat] menu %@", self.showMenu ? @"shown" : @"hidden");
+    
+    if (self.showMenu) {
+        [self renderImGui];
     }
-    UIWindow *win = [self findWindow];
-    if (!win) return;
-
-    UIView *p = [[UIView alloc] initWithFrame:CGRectMake(30, 140, 270, 230)];
-    p.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.95];
-    p.layer.cornerRadius = 14;
-    p.layer.borderWidth = 1;
-    p.layer.borderColor = [UIColor systemRedColor].CGColor;
-
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0,10,270,24)];
-    title.text = @"STANDLEO CHEAT";
-    title.textColor = [UIColor whiteColor];
-    title.textAlignment = NSTextAlignmentCenter;
-    title.font = [UIFont boldSystemFontOfSize:16];
-    [p addSubview:title];
-
-    // Переключатели (пока декоративные, патчи всегда активны)
-    [self addSwitch:p label:@"Wallbang (всегда вкл)" y:45 tag:1];
-    [self addSwitch:p label:@"NoRecoil (всегда вкл)" y:80 tag:2];
-    [self addSwitch:p label:@"ESP (скоро)" y:115 tag:3];
-
-    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(75, 165, 120, 36);
-    [close setTitle:@"Скрыть" forState:UIControlStateNormal];
-    close.backgroundColor = [UIColor systemRedColor];
-    [close setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    close.layer.cornerRadius = 8;
-    [close addTarget:self action:@selector(hide:) forControlEvents:UIControlEventTouchUpInside];
-    [p addSubview:close];
-
-    [win addSubview:p];
-    self.panel = p;
 }
 
-- (void)addSwitch:(UIView*)p label:(NSString*)name y:(CGFloat)y tag:(NSInteger)tag {
-    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16,y,150,28)];
-    l.text = name; l.textColor = [UIColor whiteColor]; l.font = [UIFont systemFontOfSize:15];
-    [p addSubview:l];
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(205,y,50,28)];
-    sw.tag = tag;
-    sw.on = YES; // Включено по умолчанию (патчи всегда активны)
-    sw.enabled = NO; // Нельзя выключить (пока)
-    [sw addTarget:self action:@selector(onSwitch:) forControlEvents:UIControlEventValueChanged];
-    [p addSubview:sw];
-}
-
-- (void)onSwitch:(UISwitch*)sw {
-    NSLog(@"[Cheat] switch %ld = %d", (long)sw.tag, sw.on);
-}
-
-- (void)hide:(UIButton*)x { [self.panel removeFromSuperview]; self.panel = nil; }
-
-- (void)pan:(UIPanGestureRecognizer*)r {
-    CGPoint t=[r translationInView:r.view.superview];
-    r.view.center=CGPointMake(r.view.center.x+t.x, r.view.center.y+t.y);
-    [r setTranslation:CGPointMake(0,0) inView:r.view.superview];
+- (void)renderImGui {
+    if (!self.imguiInitialized || !self.showMenu) return;
+    
+    ImGui_ImplMetal_NewFrame();
+    ImGui::NewFrame();
+    
+    ImGui::Begin("STANDLEO CHEAT");
+    ImGui::Text("Wallbang: ON");
+    ImGui::Text("NoRecoil: ON");
+    ImGui::Checkbox("BunnyHop", nullptr);
+    ImGui::End();
+    
+    ImGui::Render();
+    
+    id<CAMetalDrawable> drawable = [self.metalLayer nextDrawable];
+    if (!drawable) return;
+    
+    id<MTLRenderPassDescriptor> passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
+    passDesc.colorAttachments[0].texture = drawable.texture;
+    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+    
+    id<MTLCommandBuffer> cmdBuffer = [self.commandQueue commandBuffer];
+    id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
+    ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), encoder);
+    [encoder endEncoding];
+    [cmdBuffer presentDrawable:drawable];
+    [cmdBuffer commit];
 }
 
 @end
