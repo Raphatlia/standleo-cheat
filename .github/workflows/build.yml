@@ -20,20 +20,47 @@ jobs:
     - name: Compile Cheat.dylib with ImGui
       run: |
         set -e
-        clang++ -dynamiclib \
-          -arch arm64 \
-          -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
-          -miphoneos-version-min=14.0 \
+        SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+        
+        # 1. Компилируем ImGui core (C++ файлы, без ARC)
+        clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
+          -I./imgui -I./imgui/backends \
+          -std=c++11 \
+          imgui/imgui.cpp -o imgui.o
+        clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
+          -I./imgui -I./imgui/backends \
+          -std=c++11 \
+          imgui/imgui_draw.cpp -o imgui_draw.o
+        clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
+          -I./imgui -I./imgui/backends \
+          -std=c++11 \
+          imgui/imgui_tables.cpp -o imgui_tables.o
+        clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
+          -I./imgui -I./imgui/backends \
+          -std=c++11 \
+          imgui/imgui_widgets.cpp -o imgui_widgets.o
+        
+        # 2. Компилируем Metal бэкенд БЕЗ ARC (он на чистом ObjC)
+        clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
+          -I./imgui -I./imgui/backends \
+          -fno-objc-arc \
+          -Wno-deprecated-declarations \
+          imgui/backends/imgui_impl_metal.mm -o imgui_impl_metal.o
+        
+        # 3. Компилируем наш Cheat.mm С ARC
+        clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
+          -I./imgui -I./imgui/backends \
           -fobjc-arc \
-          -O2 \
-          -I./imgui \
-          -I./imgui/backends \
-          Cheat.mm \
-          imgui/imgui.cpp \
-          imgui/imgui_draw.cpp \
-          imgui/imgui_tables.cpp \
-          imgui/imgui_widgets.cpp \
-          imgui/backends/imgui_impl_metal.mm \
+          -std=c++11 \
+          -Wno-deprecated-declarations \
+          Cheat.mm -o Cheat.o
+        
+        # 4. Линкуем всё вместе
+        clang++ -dynamiclib -arch arm64 \
+          -isysroot $SDK \
+          -miphoneos-version-min=14.0 \
+          imgui.o imgui_draw.o imgui_tables.o imgui_widgets.o \
+          imgui_impl_metal.o Cheat.o \
           -o Cheat.dylib \
           -framework UIKit \
           -framework Foundation \
@@ -41,6 +68,7 @@ jobs:
           -framework Metal \
           -framework MetalKit \
           2>&1 | tee build.log
+        
         ls -la Cheat.dylib
         file Cheat.dylib
 
