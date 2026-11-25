@@ -13,6 +13,7 @@
 //-----------------------------------------------------------------------------
 
 #pragma once
+#define ImTextureID void*
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 
