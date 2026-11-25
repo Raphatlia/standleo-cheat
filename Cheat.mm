@@ -11,6 +11,8 @@
 @property (nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property (nonatomic, strong) CAMetalLayer *metalLayer;
 @property (nonatomic, assign) BOOL imguiInitialized;
+@property (nonatomic, assign) CGFloat framebufferWidth;
+@property (nonatomic, assign) CGFloat framebufferHeight;
 @end
 
 @implementation CheatManager
@@ -39,11 +41,9 @@ static CheatManager *g = nil;
     UIWindow *win = [self findWindow];
     if (!win) return;
 
-    // Инициализация Metal
     self.device = MTLCreateSystemDefaultDevice();
     self.commandQueue = [self.device newCommandQueue];
     
-    // Создаём CAMetalLayer для ImGui
     self.metalLayer = [CAMetalLayer layer];
     self.metalLayer.device = self.device;
     self.metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -52,12 +52,17 @@ static CheatManager *g = nil;
     self.metalLayer.contentsScale = [UIScreen mainScreen].scale;
     [win.layer addSublayer:self.metalLayer];
     
-    // Инициализация ImGui
+    self.framebufferWidth = win.bounds.size.width * [UIScreen mainScreen].scale;
+    self.framebufferHeight = win.bounds.size.height * [UIScreen mainScreen].scale;
+    
     ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(self.framebufferWidth, self.framebufferHeight);
+    io.DisplayFramebufferScale = ImVec2([UIScreen mainScreen].scale, [UIScreen mainScreen].scale);
+    
     ImGui_ImplMetal_Init(self.device);
     self.imguiInitialized = YES;
     
-    // Кнопка для открытия меню
     UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
     b.frame = CGRectMake(win.bounds.size.width-80, 60, 60, 60);
     b.backgroundColor = [UIColor colorWithRed:1 green:0 blue:0 alpha:0.75];
@@ -74,16 +79,21 @@ static CheatManager *g = nil;
 - (void)toggle:(UIButton*)x {
     self.showMenu = !self.showMenu;
     NSLog(@"[Cheat] menu %@", self.showMenu ? @"shown" : @"hidden");
-    
-    if (self.showMenu) {
-        [self renderImGui];
-    }
 }
 
 - (void)renderImGui {
     if (!self.imguiInitialized || !self.showMenu) return;
     
-    ImGui_ImplMetal_NewFrame();
+    id<CAMetalDrawable> drawable = [self.metalLayer nextDrawable];
+    if (!drawable) return;
+    
+    MTLRenderPassDescriptor *passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
+    passDesc.colorAttachments[0].texture = drawable.texture;
+    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+    
+    ImGui_ImplMetal_NewFrame(passDesc);
     ImGui::NewFrame();
     
     ImGui::Begin("STANDLEO CHEAT");
@@ -94,18 +104,9 @@ static CheatManager *g = nil;
     
     ImGui::Render();
     
-    id<CAMetalDrawable> drawable = [self.metalLayer nextDrawable];
-    if (!drawable) return;
-    
-    id<MTLRenderPassDescriptor> passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
-    passDesc.colorAttachments[0].texture = drawable.texture;
-    passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
-    passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
-    
     id<MTLCommandBuffer> cmdBuffer = [self.commandQueue commandBuffer];
     id<MTLRenderCommandEncoder> encoder = [cmdBuffer renderCommandEncoderWithDescriptor:passDesc];
-    ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), encoder);
+    ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), cmdBuffer, encoder);
     [encoder endEncoding];
     [cmdBuffer presentDrawable:drawable];
     [cmdBuffer commit];
