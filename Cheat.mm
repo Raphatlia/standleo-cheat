@@ -14,11 +14,11 @@
 #include <functional>
 #include <unordered_map>
 
-// ===== Состояния (готово к хукам) =====
+// ===== Состояния =====
 static bool g_wallbang = true, g_norecoil = true, g_bunnyhop = false;
 static bool g_esp_box = true, g_esp_health = true, g_esp_nickname = true;
 static bool g_offscreen = false, g_internal = false;
-static bool g_wallbang_status = true, g_norecoil_status = true;  // ← отдельные для правой колонки
+static bool g_wallbang_status = true, g_norecoil_status = true;
 static bool g_simple_switch = false, g_auto_strafe = false, g_fast_drop = false;
 static int  g_slider = 0;
 static int  g_combo = 0;
@@ -141,7 +141,7 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     return changed;
 }
 
-// ===== colorpicker =====
+// ===== colorpicker (два разных popup) =====
 static void color(const char* label, std::vector<ImVec4*> colors) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return;
@@ -156,28 +156,41 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     if (!ImGui::ItemAdd(total_bb, id)) return;
     ImDrawList* d = w->DrawList;
     ImVec2 min = total_bb.Max - ImVec2(0, sq-2);
+    
+    static int selected_color_idx = 0;
+    
     for (int i=0;i<(int)colors.size();i++){
         ImRect cb(ImVec2(min.x - sq*(i+1) - 8*i, min.y), ImVec2(min.x - sq*i - 8*i, total_bb.Max.y-2));
-        ImGuiID cid = id*10*(i+1);
+        ImGuiID cid = id*100 + i + 1;
         ImGui::ItemAdd(cb, cid);
         bool h2,hd; bool p2 = ImGui::ButtonBehavior(cb, cid, &h2, &hd);
-        if (p2) ImGui::OpenPopup("##col_pop");
+        if (p2) {
+            selected_color_idx = i;
+            char popup_name[32];
+            snprintf(popup_name, sizeof(popup_name), "##col_pop_%d", i);
+            ImGui::OpenPopup(popup_name);
+        }
         d->AddRectFilled(cb.Min, cb.Max, ImGui::ColorConvertFloat4ToU32(*colors[i]), 3);
         d->AddRect(cb.Min, cb.Max, ImColor(55,55,66,(int)(st.Alpha*255)), 3);
     }
     if (ls.x>0) d->AddText(total_bb.Min, ImColor(155,155,155), label);
-    if (ImGui::BeginPopup("##col_pop")) {
-        float a = anim_f(id+7,1.f,0.08f);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, a*st.Alpha);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,a*st.Alpha));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,a*st.Alpha));
-        ImGui::ColorPicker4("##p",(float*)colors[0], ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_NoSidePreview|ImGuiColorEditFlags_AlphaBar);
-        ImGui::PopStyleColor(2); ImGui::PopStyleVar();
-        ImGui::EndPopup();
-    } else anim_f(id+7,0.f,0.08f);
+    
+    for (int i=0;i<(int)colors.size();i++){
+        char popup_name[32];
+        snprintf(popup_name, sizeof(popup_name), "##col_pop_%d", i);
+        if (ImGui::BeginPopup(popup_name)) {
+            float a = anim_f(id+7+i,1.f,0.08f);
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, a*st.Alpha);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,a*st.Alpha));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,a*st.Alpha));
+            ImGui::ColorPicker4("##p",(float*)colors[i], ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_NoSidePreview|ImGuiColorEditFlags_AlphaBar);
+            ImGui::PopStyleColor(2); ImGui::PopStyleVar();
+            ImGui::EndPopup();
+        } else anim_f(id+7+i,0.f,0.08f);
+    }
 }
 
-// ===== selectable (закрывает popup) =====
+// ===== selectable =====
 static bool sel_custom(const char* label, bool selected) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -192,7 +205,7 @@ static bool sel_custom(const char* label, bool selected) {
     ImVec4 text = anim_v(id+8, (selected||hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
     if (hovered) w->DrawList->AddRectFilled(bb.Min,bb.Max,ImColor(255,255,255,12),4);
     w->DrawList->AddText(pos, ImGui::ColorConvertFloat4ToU32(text), label);
-    if (pressed && (w->Flags & ImGuiWindowFlags_Popup)) ImGui::CloseCurrentPopup();  // ← закрывает popup
+    if (pressed && (w->Flags & ImGuiWindowFlags_Popup)) ImGui::CloseCurrentPopup();
     return pressed;
 }
 
@@ -210,26 +223,29 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     ImGui::ItemSize(total,0);
     if (!ImGui::ItemAdd(total,id,&total)) return false;
     bool hovered,held; bool pressed = ImGui::ButtonBehavior(drop,id,&hovered,&held);
-    float open = anim_f(id+9, ImGui::IsPopupOpen("##dd")?1.f:0.f, 0.08f);
-    if (pressed) { if (open<0.01f) ImGui::OpenPopup("##dd"); }
-    ImVec4 text = anim_v(id+10, (ImGui::IsItemActive()||hovered||open>0.01f)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
+    bool is_open = ImGui::IsPopupOpen("##dd");
+    if (pressed) {
+        if (is_open) ImGui::CloseCurrentPopup();
+        else ImGui::OpenPopup("##dd");
+    }
+    ImVec4 text = anim_v(id+10, (ImGui::IsItemActive()||hovered||is_open)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImDrawList* d = w->DrawList;
     d->AddRect(drop.Min, drop.Max, ImColor(55,55,66,(int)(st.Alpha*255)), 8);
     d->AddText(total.Min, ImGui::ColorConvertFloat4ToU32(text), label);
     d->AddText(drop.Min+ImVec2(8,6), ImGui::ColorConvertFloat4ToU32(text), entries[*value].c_str());
     ImVec2 ar(drop.Max.x-14, drop.Min.y+10);
     d->AddTriangleFilled(ar, ImVec2(ar.x+8,ar.y), ImVec2(ar.x+4,ar.y+6), ImGui::ColorConvertFloat4ToU32(text));
-    if (open<0.01f) return false;
-    ImGui::SetNextWindowPos(ImVec2(drop.Min.x, drop.Max.y+5*open));
+    
+    if (!is_open) return false;
+    ImGui::SetNextWindowPos(ImVec2(drop.Min.x, drop.Max.y+5));
     ImGui::SetNextWindowSize(ImVec2(drop.GetWidth(),0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,8);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(10,10));
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, open*st.Alpha);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,open*st.Alpha));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,open*st.Alpha));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,1));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,1));
     bool ret = ImGui::Begin("##dd", NULL, ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar(4); ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3); ImGui::PopStyleColor(2);
     bool changed = false;
     if (ret) {
         for (int i=0;i<(int)entries.size();i++){
@@ -242,9 +258,10 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
 }
 
 // ===== simple_category =====
-static void begin_category(const char* label){
+static void begin_category(const char* label, float height = 0){
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10,10));
-    ImGui::BeginChild(label, ImVec2(ImGui::GetContentRegionAvail().x-10,0), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
+    float avail_h = height > 0 ? height : ImGui::GetContentRegionAvail().y;
+    ImGui::BeginChild(label, ImVec2(ImGui::GetContentRegionAvail().x-10, avail_h), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
     {
         ImRect wr = ImGui::GetCurrentWindow()->Rect();
         ImGui::GetWindowDrawList()->AddRect(wr.Min, wr.Max, ImColor(41,43,55,(int)(ImGui::GetStyle().Alpha*255)), 8, 0, 1);
@@ -254,26 +271,10 @@ static void begin_category(const char* label){
         ImGui::GetWindowDrawList()->AddLine(lp, ImVec2(lp.x+ImGui::GetWindowSize().x, lp.y), ImColor(41,43,55,(int)(ImGui::GetStyle().Alpha*255)));
         ImGui::Dummy(ImVec2(0,0));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0,0));
-        ImGui::BeginChild((std::string(label)+"##2").c_str(), ImVec2(ImGui::GetContentRegionAvail().x,0), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
+        ImGui::BeginChild((std::string(label)+"##2").c_str(), ImVec2(ImGui::GetContentRegionAvail().x,ImGui::GetContentRegionAvail().y), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
     }
 }
 static void end_category(){ ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::EndChild(); ImGui::PopStyleVar(); }
-
-// ===== internal_scroll =====
-static void internal_scroll(const char* label){
-    ImGuiWindow* w = ImGui::GetCurrentWindow();
-    ImVec2 mn = w->InnerRect.Min, mx = w->InnerRect.Max;
-    ImGui::SetCursorScreenPos(mn);
-    ImGui::InvisibleButton(label, mx-mn);
-    ImGuiID id = ImGui::GetID(label);
-    ImGuiStorage* s = w->DC.StateStorage;
-    bool dragging = s->GetBool(id+0,false);
-    float ds = s->GetFloat(id+1,0), ss = s->GetFloat(id+2,0);
-    if (ImGui::IsItemActive() && !dragging){ dragging=true; ds=ImGui::GetMousePos().y; ss=ImGui::GetScrollY(); }
-    else if (!ImGui::IsMouseDown(0)) dragging=false;
-    if (dragging) ImGui::SetScrollY(ss - (ImGui::GetMousePos().y - ds));
-    s->SetBool(id+0,dragging); s->SetFloat(id+1,ds); s->SetFloat(id+2,ss);
-}
 
 #pragma mark - Metal Host View
 @interface UIOverlayHostView : UIView
@@ -357,7 +358,6 @@ static AntisocialGUIManager* sharedInst=nil;
     rp.colorAttachments[0].storeAction=MTLStoreActionStore; rp.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);
     ImGui_ImplMetal_NewFrame(rp); ImGui::NewFrame();
 
-    static float child_alpha=0.f;
     const float W=620,H=370,left=140,top=40;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
@@ -392,9 +392,8 @@ static AntisocialGUIManager* sharedInst=nil;
             for(int it=0;it<6;it++){
                 ImVec2 cc=ImGui::GetCursorScreenPos();
                 ImVec2 ts=ImVec2(left,26);
-                if(ImGui::InvisibleButton(tabs[it],ts)){ self.m_current=it; self.m_sub=0; child_alpha=0.f; }
+                if(ImGui::InvisibleButton(tabs[it],ts)){ self.m_current=it; self.m_sub=0; }
                 ImRect tr(cc+ImVec2(11,0), cc+ts-ImVec2(10,0));
-                float a=anim_f(ImGui::GetID(tabs[it]), (it==self.m_current)?1.f:0.f);
                 ImVec4 txt=anim_v(ImGui::GetID(tabs[it])+1, (it==self.m_current)?ImVec4(120/255.f,123/255.f,173/255.f,1):ImVec4(220/255.f,220/255.f,220/255.f,1));
                 ImVec4 bgc=anim_v(ImGui::GetID(tabs[it])+2, (it==self.m_current)?ImVec4(26/255.f,27/255.f,47/255.f,1):ImVec4(26/255.f,27/255.f,47/255.f,0));
                 ImVec4 outl=anim_v(ImGui::GetID(tabs[it])+3, (it==self.m_current)?ImVec4(1,1,1,8/255.f):ImVec4(1,1,1,0));
@@ -407,7 +406,7 @@ static AntisocialGUIManager* sharedInst=nil;
                 float pd=tr.GetHeight()/2-tsz.y/2;
                 dl->AddText(tr.Min+ImVec2(pd*2,pd),ImGui::ColorConvertFloat4ToU32(txt),tabs[it]);
             }
-            // профиль ВНУТРИ сайдбара
+            // профиль
             ImRect child_wr=ImGui::GetCurrentWindow()->Rect();
             ImRect pr=ImRect(ImVec2(child_wr.Min.x+11,child_wr.Max.y-10-38), child_wr.Max-ImVec2(10,10));
             dl->AddRectFilled(pr.Min,pr.Max,ImColor(255,255,255,7),8);
@@ -428,7 +427,7 @@ static AntisocialGUIManager* sharedInst=nil;
             for(int it=0;it<2;it++){
                 ImVec2 cc=ImGui::GetCursorScreenPos();
                 ImVec2 ts=ImVec2(ImGui::CalcTextSize(sub[it]).x+20,top);
-                if(ImGui::InvisibleButton(sub[it],ts)){ self.m_sub=it; child_alpha=0.f; }
+                if(ImGui::InvisibleButton(sub[it],ts)){ self.m_sub=it; }
                 ImRect tr(cc+ImVec2(0,6),cc+ts-ImVec2(0,5));
                 ImVec4 txt=anim_v(ImGui::GetID(sub[it]), (it==self.m_sub)?ImVec4(120/255.f,123/255.f,173/255.f,1):ImVec4(220/255.f,220/255.f,220/255.f,1));
                 ImVec2 tsz=ImGui::CalcTextSize(sub[it]);
@@ -438,21 +437,19 @@ static AntisocialGUIManager* sharedInst=nil;
             ImGui::EndChild();
         }
 
-        // разделители
-        int s1=dl->VtxBuffer.Size;
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55),1);
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55),1);
-        int s2=dl->VtxBuffer.Size;
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,s1,s2,wr.Min,wr.Max,IM_COL32(41,43,55,255),IM_COL32(21,23,35,255));
+        // разделители (убрал — были видны как границы)
+        // int s1=dl->VtxBuffer.Size;
+        // dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55),1);
+        // dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55),1);
+        // int s2=dl->VtxBuffer.Size;
+        // ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,s1,s2,wr.Min,wr.Max,IM_COL32(41,43,55,255),IM_COL32(21,23,35,255));
 
-        child_alpha=anim_f(ImGui::GetID("##ca"),1.f,0.15f);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,child_alpha);
-        ImGui::SetCursorPos(ImVec2(left+11, top+1+(35*(1-child_alpha))));
-        float colw=ImGui::GetContentRegionAvail().x/2-0.5f;
+        ImGui::SetCursorPos(ImVec2(left+11, top+10));
+        float colw=(W-left-22-10)/2;
+        float colh=H-top-20;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(10,10));
-        ImGui::BeginChild("##c1",ImVec2(colw,ImGui::GetContentRegionAvail().y),false,ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##c1",ImVec2(colw,colh),false,ImGuiWindowFlags_NoScrollbar);
         {
-            ImGui::ItemSize(ImVec2(0,0));
             if(self.m_current==0){
                 toggle("Box ESP",&g_esp_box,"With configuration!",[]{ internal_toggle("Internal too?",&g_internal); slider_int("And slider??",&g_slider,-5,5); color("Colorpicker",{&g_col1,&g_col2}); });
                 toggle("Health Bar",&g_esp_health,nullptr);
@@ -470,54 +467,42 @@ static AntisocialGUIManager* sharedInst=nil;
             } else {
                 ImGui::TextColored(ImVec4(0.5f,0.5f,0.58f,1),"No configs yet");
             }
-            internal_scroll("##left_window");
             ImGui::EndChild();
         }
-        ImGui::SameLine(0,0);
-        ImGui::BeginChild("##c2",ImVec2(colw,ImGui::GetContentRegionAvail().y),false,ImGuiWindowFlags_NoScrollbar);
+        ImGui::SameLine(0,10);
+        ImGui::BeginChild("##c2",ImVec2(colw,colh),false,ImGuiWindowFlags_NoScrollbar);
         {
-            ImGui::ItemSize(ImVec2(0,0));
             if(self.m_current==0){
-                begin_category("Category example"); internal_toggle("Simple switch",&g_simple_switch); end_category();
-                toggle("Another toggle",&g_esp_health,"Lorem ipsum paster sin shluxi",[]{ combo("##combo_hidden",&g_combo,{"First","Second","Third"}); });
+                begin_category("Category example", colh-20); internal_toggle("Simple switch",&g_simple_switch); end_category();
             } else if(self.m_current==1){
-                begin_category("Status");
+                begin_category("Status", colh-20);
                 internal_toggle("Wallbang ON",&g_wallbang_status);
                 internal_toggle("NoRecoil ON",&g_norecoil_status);
                 end_category();
             } else if(self.m_current==2){
-                begin_category("Combo"); combo("##combo_hidden",&g_combo,{"First","Second","Third"}); end_category();
+                begin_category("Combo", colh-20); combo("##combo_hidden",&g_combo,{"First","Second","Third"}); end_category();
             } else if(self.m_current==3){
-                begin_category("Movement"); internal_toggle("Auto Strafe",&g_auto_strafe); end_category();
+                begin_category("Movement", colh-20); internal_toggle("Auto Strafe",&g_auto_strafe); end_category();
             } else if(self.m_current==4){
-                begin_category("Misc"); internal_toggle("Fast Drop",&g_fast_drop); end_category();
+                begin_category("Misc", colh-20); internal_toggle("Fast Drop",&g_fast_drop); end_category();
             } else {
-                begin_category("Configs"); ImGui::TextColored(ImVec4(0.5f,0.5f,0.58f,1),"Empty"); end_category();
+                begin_category("Configs", colh-20); ImGui::TextColored(ImVec4(0.5f,0.5f,0.58f,1),"Empty"); end_category();
             }
-            internal_scroll("##right_window");
             ImGui::EndChild();
         }
         ImGui::PopStyleVar();
-        ImGui::PopStyleVar();
-
-        // рамка окна (убрал — были видны границы)
-        // int f1=dl->VtxBuffer.Size;
-        // dl->AddRect(wr.Min,wr.Max,ImColor(41,43,55),ImGui::GetStyle().WindowRounding,0,2);
-        // int f2=dl->VtxBuffer.Size;
-        // ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,f1,f2,wr.Min,wr.Max,IM_COL32(41,43,55,255),IM_COL32(21,23,35,255));
 
         // drag с clamp
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
-        if(inBar&&ImGui::IsMouseClicked(0)){self.isDragging=YES;self.dragStartPos=CGPointMake(mp.x-self.menuOffset.x,mp.y-self.menuOffset.y);}
-        if(self.isDragging&&ImGui::IsMouseDown(0)){
+        if(inBar&&ImGui::IsMouseDown(0)){
+            if(!self.isDragging){self.isDragging=YES;self.dragStartPos=CGPointMake(mp.x-self.menuOffset.x,mp.y-self.menuOffset.y);}
             CGPoint no=CGPointMake(mp.x-self.dragStartPos.x,mp.y-self.dragStartPos.y);
-            // clamp по границам экрана
             no.x=MAX(0,MIN(no.x,self.screenWidth-W));
             no.y=MAX(0,MIN(no.y,self.screenHeight-H));
             self.menuOffset=no;
             self.hostView.frame=CGRectMake(no.x,no.y,W,H);
-        } else if(!ImGui::IsMouseDown(0)) self.isDragging=NO;
+        } else self.isDragging=NO;
 
         ImGui::End();
     }
