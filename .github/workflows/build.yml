@@ -20,6 +20,7 @@ jobs:
       run: |
         SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
+        # Компиляция ImGui файлов
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
           -I./ -I./imgui -I./imgui/backends \
           -fno-objc-arc -std=c++17 -Wno-deprecated-declarations \
@@ -45,18 +46,21 @@ jobs:
           -fno-objc-arc -std=c++17 -Wno-deprecated-declarations \
           imgui/backends/imgui_impl_metal.mm -o imgui_impl_metal.o
 
+        # Компиляция Cheat.mm (с ARC)
         clang++ -c -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 -O2 \
           -I./ -I./imgui -I./imgui/backends \
           -fobjc-arc -std=c++17 -Wno-deprecated-declarations \
           Cheat.mm -o Cheat.o
 
+        # Линковка — ДОБАВЛЕНЫ Foundation и -lobjc
         clang++ -shared -arch arm64 -isysroot $SDK -miphoneos-version-min=14.0 \
           imgui.o imgui_draw.o imgui_widgets.o imgui_tables.o imgui_impl_metal.o Cheat.o \
-          -framework UIKit -framework Metal -framework QuartzCore -framework CoreGraphics \
+          -framework UIKit -framework Foundation -framework Metal -framework QuartzCore -framework CoreGraphics \
+          -lobjc \
           -o Cheat.dylib
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Cheat.dylib
-        path: Cheat.dylib
+      path: Cheat.dylib
