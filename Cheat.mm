@@ -23,10 +23,9 @@ static bool g_simple_switch = false, g_auto_strafe = false, g_fast_drop = false;
 static int  g_slider = 0;
 static int  g_combo = 0;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
-static float g_gui_scale = 1.0f;  // масштаб GUI (0.7 - 1.3)
 
 // ===== Аниматоры =====
-static float anim_f(ImGuiID id, float target, float dur = 0.12f) {
+static float anim_f(ImGuiID id, float target, float dur = 0.15f) {
     static std::unordered_map<ImGuiID,float> m;
     float& cur = m[id];
     float t = ImClamp(ImGui::GetIO().DeltaTime / dur, 0.0f, 1.0f);
@@ -34,7 +33,7 @@ static float anim_f(ImGuiID id, float target, float dur = 0.12f) {
     if (fabsf(cur - target) < 0.001f) cur = target;
     return cur;
 }
-static ImVec4 anim_v(ImGuiID id, ImVec4 target, float dur = 0.12f) {
+static ImVec4 anim_v(ImGuiID id, ImVec4 target, float dur = 0.15f) {
     static std::unordered_map<ImGuiID,ImVec4> m;
     ImVec4& c = m[id];
     float t = ImClamp(ImGui::GetIO().DeltaTime / dur, 0.0f, 1.0f);
@@ -45,7 +44,7 @@ static ImVec4 anim_v(ImGuiID id, ImVec4 target, float dur = 0.12f) {
 
 static ImFont* logo_font = nullptr;
 
-// ===== internal_toggle (РОЗОВЫЙ свитч) =====
+// ===== internal_toggle с плавной анимацией =====
 static bool internal_toggle(const char* label, bool* v) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -62,19 +61,24 @@ static bool internal_toggle(const char* label, bool* v) {
     bool pressed = ImGui::ButtonBehavior(total_bb, id, &hovered, &held);
     if (pressed) *v = !(*v);
     const ImRect check_bb(ImVec2(total_bb.Max.x - sq*2 + 10, total_bb.Min.y + 2), total_bb.Max - ImVec2(0,2));
-    float main = anim_f(id, *v?1.f:0.f);
-    // РОЗОВЫЙ когда включён
+    
+    // Плавная анимация кружка
+    float main = anim_f(id, *v?1.f:0.f, 0.18f);
+    // Розовый когда включён
     ImVec4 pill = anim_v(id+1, *v ? ImVec4(234/255.f,193/255.f,251/255.f,1) : ImVec4(55/255.f,55/255.f,66/255.f,1));
     ImVec4 text = anim_v(id+2, (*v||hovered) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImVec4 outl = anim_v(id+3, *v ? ImVec4(234/255.f,193/255.f,251/255.f,1) : ImVec4(55/255.f,55/255.f,66/255.f,1));
     ImVec4 bg   = anim_v(id+4, *v ? ImVec4(25/255.f,25/255.f,25/255.f,1) : ImVec4(25/255.f,25/255.f,25/255.f,0));
+    
     ImDrawList* d = w->DrawList;
     int vs = d->VtxBuffer.Size;
     d->AddRectFilled(check_bb.Min, check_bb.Max, ImGui::ColorConvertFloat4ToU32(bg), 666);
     int ve = d->VtxBuffer.Size;
     if (ve>vs) ImGui::ShadeVertsLinearColorGradientKeepAlpha(d,vs,ve,check_bb.Min,check_bb.Max,IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
     d->AddRect(check_bb.Min, check_bb.Max, ImGui::ColorConvertFloat4ToU32(outl), 666);
+    // Кружок двигается плавно
     d->AddCircleFilled(ImVec2(check_bb.Min.x + 8 + 14*main, check_bb.GetCenter().y), 5, ImGui::ColorConvertFloat4ToU32(pill), 200);
+    
     ImGui::PushStyleColor(ImGuiCol_Text, text);
     if (ls.x>0) ImGui::RenderText(total_bb.Min, label);
     ImGui::PopStyleColor();
@@ -111,19 +115,20 @@ static void toggle(const char* label, bool* v, const char* desc, std::function<v
     ImGui::PopStyleVar();
 }
 
-// ===== slider_int — ГРАДИЕНТ ПО ВСЕМУ ТРЕКУ (белый→розовый) =====
+// ===== slider_int — БЕЗ КРУЖКА, просто розовая полоса =====
 static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
     const ImGuiID id = w->GetID(label);
     const float width = ImGui::GetContentRegionAvail().x;
     const ImVec2 pos = w->DC.CursorPos;
-    const float h = 30.0f;
+    const float h = 28.0f;
     const ImRect bb(pos, ImVec2(pos.x + width, pos.y + h));
     ImGui::ItemSize(bb);
     if (!ImGui::ItemAdd(bb, id)) return false;
     bool hovered, held;
     bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+    // Зажал и тяни — работает по всему треку
     if (held) {
         float ratio = ImClamp((ImGui::GetIO().MousePos.x - bb.Min.x) / width, 0.f, 1.f);
         int nv = vmin + (int)roundf(ratio * (vmax - vmin));
@@ -134,17 +139,15 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     d->AddText(pos, IM_COL32(235,235,242,255), txt);
     float trkY = pos.y + h - 8;
     ImVec2 trkMin(pos.x, trkY), trkMax(pos.x + width, trkY + 5);
-    d->AddRectFilled(trkMin, trkMax, IM_COL32(55,55,66,255), 2.5f);
-    // ГРАДИЕНТ ПО ВСЕМУ ТРЕКУ
-    d->AddRectFilledMultiColor(trkMin, trkMax,
+    // Фон трека
+    d->AddRectFilled(trkMin, trkMax, IM_COL32(40,40,55,255), 2.5f);
+    // Заполненная часть — розовая
+    float ratio = (float)(*v - vmin) / (float)(vmax - vmin);
+    ImVec2 fillMax(trkMin.x + (trkMax.x - trkMin.x) * ratio, trkMax.y);
+    d->AddRectFilledMultiColor(trkMin, fillMax,
         IM_COL32(255,255,255,255), IM_COL32(234,193,251,255),
         IM_COL32(234,193,251,255), IM_COL32(255,255,255,255));
-    // Grab-квадратик
-    float ratio = (float)(*v - vmin) / (float)(vmax - vmin);
-    float gx = trkMin.x + (trkMax.x - trkMin.x) * ratio;
-    float gw = 12.0f;
-    ImVec2 gMin(gx - gw*0.5f, trkY - 2), gMax(gx + gw*0.5f, trkY + 7);
-    d->AddRectFilled(gMin, gMax, IM_COL32(245,245,250,255), 2.0f);
+    // БЕЗ кружка/квадрата — просто полоса
     return pressed;
 }
 
@@ -187,27 +190,7 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     }
 }
 
-// ===== selectable (с обводкой) =====
-static bool sel_custom(const char* label, bool selected) {
-    ImGuiWindow* w = ImGui::GetCurrentWindow();
-    if (w->SkipItems) return false;
-    const ImGuiID id = w->GetID(label);
-    const ImVec2 ls = ImGui::CalcTextSize(label,NULL,true);
-    const ImVec2 pos = w->DC.CursorPos;
-    const ImVec2 size(ImGui::GetContentRegionAvail().x, ls.y);
-    const ImRect bb(pos, pos+size);
-    ImGui::ItemSize(size,0);
-    if (!ImGui::ItemAdd(bb,id)) return false;
-    bool hovered,held; bool pressed = ImGui::ButtonBehavior(bb,id,&hovered,&held);
-    ImVec4 text = anim_v(id+8, (selected||hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
-    if (hovered) w->DrawList->AddRectFilled(bb.Min,bb.Max,ImColor(255,255,255,12),4);
-    w->DrawList->AddRect(bb.Min,bb.Max,ImColor(55,55,66,180),4);  // обводка
-    w->DrawList->AddText(pos, ImGui::ColorConvertFloat4ToU32(text), label);
-    if (pressed && (w->Flags & ImGuiWindowFlags_Popup)) ImGui::CloseCurrentPopup();
-    return pressed;
-}
-
-// ===== combo (с BeginPopup) =====
+// ===== combo — ИСПРАВЛЕННЫЙ, с анимацией =====
 static bool combo(const char* label, int* value, std::vector<std::string> entries) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -235,14 +218,32 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     ImGui::SetNextWindowSize(ImVec2(drop.GetWidth(),0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,8);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(10,10));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,1));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,1));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(8,8));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(16/255.f,16/255.f,28/255.f,1));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(41/255.f,43/255.f,55/255.f,1));
     bool changed = false;
     if (ImGui::BeginPopup("##dd")) {
         ImGui::PopStyleColor(2); ImGui::PopStyleVar(3);
         for (int i=0;i<(int)entries.size();i++){
-            if (sel_custom(entries[i].c_str(), i==*value) && *value!=i){ changed=true; *value=i; ImGui::CloseCurrentPopup(); }
+            ImGuiID item_id = id + 100 + i;
+            ImVec2 item_size(ImGui::GetContentRegionAvail().x, 24);
+            ImRect item_bb(ImGui::GetCursorPos(), ImGui::GetCursorPos()+item_size);
+            bool item_hovered = ImGui::IsMouseHoveringRect(
+                ImGui::GetCursorScreenPos(), 
+                ImGui::GetCursorScreenPos()+item_size
+            );
+            if (ImGui::InvisibleButton(entries[i].c_str(), item_size)) {
+                *value = i;
+                changed = true;
+                ImGui::CloseCurrentPopup();
+            }
+            // Подсветка выбранного и hovered
+            ImVec4 item_text = anim_v(item_id, (i==*value||item_hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
+            ImDrawList* item_d = ImGui::GetWindowDrawList();
+            ImVec2 item_screen = ImGui::GetCursorScreenPos() - item_size;
+            if (item_hovered) item_d->AddRectFilled(item_screen, item_screen+item_size, ImColor(255,255,255,15), 4);
+            if (i==*value) item_d->AddRect(item_screen, item_screen+item_size, ImColor(234,193,251,180), 4);
+            item_d->AddText(item_screen+ImVec2(8,6), ImGui::ColorConvertFloat4ToU32(item_text), entries[i].c_str());
         }
         if (!ImGui::IsWindowHovered() && ImGui::GetIO().MouseClicked[0]) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -300,30 +301,9 @@ static AntisocialGUIManager* sharedInst=nil;
 + (AntisocialGUIManager*)shared { if(!sharedInst) sharedInst=[[self alloc] init]; return sharedInst; }
 + (void)load { for(int i=1;i<=15;i++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [[AntisocialGUIManager shared] trySetup]; }); }
 - (UIWindow*)findKeyWindow { for(UIScene* s in UIApplication.sharedApplication.connectedScenes){ if(![s isKindOfClass:[UIWindowScene class]])continue; for(UIWindow* w in ((UIWindowScene*)s).windows) if(w.isKeyWindow) return w;} return nil; }
-
-- (void)updateSize {
-    // Базовый размер 620x370, масштабируется g_gui_scale
-    self.baseW = 620.0f * g_gui_scale;
-    self.baseH = 370.0f * g_gui_scale;
-    // Clamp по экрану
-    CGSize sc = [UIScreen mainScreen].bounds.size;
-    self.baseW = MIN(self.baseW, sc.width * 0.92f);
-    self.baseH = MIN(self.baseH, sc.height * 0.70f);
-    self.baseW = MAX(self.baseW, 320.0f);
-    self.baseH = MAX(self.baseH, 200.0f);
-    CGFloat px = (sc.width - self.baseW) * 0.5f;
-    CGFloat py = (sc.height - self.baseH) * 0.5f;
-    self.menuOffset = CGPointMake(px, py);
-    self.hostView.frame = CGRectMake(px, py, self.baseW, self.baseH);
-    CGFloat scale = [UIScreen mainScreen].scale;
-    self.metalLayer.drawableSize = CGSizeMake(self.baseW * scale, self.baseH * scale);
-    ImGui::GetIO().DisplaySize = ImVec2(self.baseW, self.baseH);
-}
-
 - (void)trySetup {
     if(self.hostView) return; UIWindow* kw=[self findKeyWindow]; if(!kw) return;
     CGFloat scale=[UIScreen mainScreen].scale; CGSize sc=kw.bounds.size;
-    
     self.baseW = 620.0f; self.baseH = 370.0f;
     CGFloat px=(sc.width-self.baseW)*0.5, py=(sc.height-self.baseH)*0.5;
     self.menuOffset=CGPointMake(px,py);
@@ -385,13 +365,9 @@ static AntisocialGUIManager* sharedInst=nil;
     const float W=self.baseW, H=self.baseH;
     const float left=W*0.23f, top=40;
     
-    // Анимация открытия GUI (fade-in)
-    if (self.isMenuVisible && !self.wasVisible) { /* сброс триггера */ }
     float gui_alpha = anim_f(ImGui::GetID("gui_alpha"), 1.0f, 0.25f);
-    
-    // Анимация смены вкладок (fade)
     static int prev_tab = -1;
-    if (prev_tab != self.m_current) { /* триггер */ prev_tab = self.m_current; }
+    if (prev_tab != self.m_current) { prev_tab = self.m_current; }
     float tab_alpha = anim_f(ImGui::GetID("tab_alpha"), 1.0f, 0.20f);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
@@ -407,7 +383,6 @@ static AntisocialGUIManager* sharedInst=nil;
         int ve=dl->VtxBuffer.Size;
         ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,vs,ve,wr.Min,wr.Max+ImVec2(600,600),IM_COL32(16,16,28,255),IM_COL32(27,15,61,255));
 
-        // ЛЕВЫЙ САЙДБАР
         ImGui::SetCursorPos(ImVec2(0,0));
         ImGui::BeginChild("##left",ImVec2(left,wr.GetHeight()),false);
         {
@@ -442,7 +417,6 @@ static AntisocialGUIManager* sharedInst=nil;
                 float pd=tr.GetHeight()/2-tsz.y/2;
                 dl->AddText(tr.Min+ImVec2(pd*2,pd),ImGui::ColorConvertFloat4ToU32(txt),tabs[it]);
             }
-            // профиль ВНУТРИ сайдбара (как было)
             ImRect child_wr=ImGui::GetCurrentWindow()->Rect();
             ImRect pr=ImRect(ImVec2(child_wr.Min.x+11,child_wr.Max.y-10-38), child_wr.Max-ImVec2(10,10));
             dl->AddRectFilled(pr.Min,pr.Max,ImColor(255,255,255,7),8);
@@ -454,7 +428,6 @@ static AntisocialGUIManager* sharedInst=nil;
             ImGui::EndChild();
         }
 
-        // ВЕРХНИЕ SUBTABS (General/Advanced — РАБОЧИЕ)
         ImGui::SetCursorPos(ImVec2(left,0));
         ImGui::BeginChild("##top",ImVec2(ImGui::GetContentRegionAvail().x,top),false);
         {
@@ -480,12 +453,11 @@ static AntisocialGUIManager* sharedInst=nil;
         float colw=(W-left-22-10)/2;
         float colh=H-top-20;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(10,10));
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, tab_alpha);  // fade при смене вкладок
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, tab_alpha);
         
         ImGui::BeginChild("##c1",ImVec2(colw,colh),false,ImGuiWindowFlags_NoScrollbar);
         {
             if (self.m_sub == 0) {
-                // GENERAL — основные тумблеры
                 if(self.m_current==0){
                     toggle("Box ESP",&g_esp_box,nullptr);
                     toggle("Health Bar",&g_esp_health,nullptr);
@@ -503,7 +475,6 @@ static AntisocialGUIManager* sharedInst=nil;
                     ImGui::TextColored(ImVec4(0.5f,0.5f,0.58f,1),"No configs yet");
                 }
             } else {
-                // ADVANCED — тонкая настройка
                 if(self.m_current==0){
                     slider_int("ESP Distance",&g_slider,0,200);
                     color("ESP Color",{&g_col1,&g_col2});
@@ -544,7 +515,6 @@ static AntisocialGUIManager* sharedInst=nil;
         }
         ImGui::PopStyleVar(2);
 
-        // drag — плавный, интерполяция 0.25
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
         if(inBar && ImGui::IsMouseClicked(0)) {
