@@ -4,11 +4,17 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_impl_metal.h"
-#include "font_awesome.hpp"
-#include "logo.hpp"
-#include "medium.hpp"
 
-// Глобальные переменные для функций
+// Шрифты из репо
+#include "font.hpp"           // Instrument Sans (основной)
+#include "logo.hpp"           // Шрифт для логотипа "A"
+#include "font_awesome.hpp"   // Иконки Font Awesome
+
+// ⚠️ ВАЖНО: Если имена массивов в твоих файлах другие, замени здесь:
+// Обычно это font_ttf, logo_ttf, font_awesome_ttf
+// Проверь первые строки каждого .hpp файла
+
+// Состояния переключателей
 static bool g_wallbang = true;
 static bool g_norecoil = true;
 static bool g_bunnyhop = false;
@@ -16,101 +22,20 @@ static bool g_esp_box = true;
 static bool g_esp_health = true;
 static bool g_esp_nickname = true;
 
-// Аниматор для плавных переходов
-class c_animator {
-    std::any value;
-    std::chrono::steady_clock::time_point last_update;
-public:
-    c_animator(float initial) : value(initial), last_update(std::chrono::steady_clock::now()) {}
-    void set(float to_value) { value = to_value; last_update = std::chrono::steady_clock::now(); }
-    float get() const { return std::any_cast<float>(value); }
-    void update(float to_value, float duration) {
-        auto now = std::chrono::steady_clock::now();
-        float delta = std::chrono::duration<float>(now - last_update).count();
-        last_update = now;
-        float current = std::any_cast<float>(value);
-        float new_value = current + (to_value - current) * (delta / duration);
-        value = new_value;
-    }
-};
+#pragma mark - Кастомные элементы
 
-#pragma mark - Кастомные виджеты
-
-namespace elem {
-    // Pill-тумблер с анимацией
-    bool toggle(const char* label, bool* v, const char* description = "") {
-        ImGuiWindow* window = ImGui::GetCurrentWindow();
-        if (window->SkipItems) return false;
-        const ImGuiID id = window->GetID(label);
-        float height = 44.0f;
-        ImVec2 pos = window->DC.CursorPos;
-        ImRect bb(pos, ImVec2(pos.x + ImGui::GetContentRegionAvail().x, pos.y + height));
-        ImGui::ItemSize(bb);
-        if (!ImGui::ItemAdd(bb, id)) return false;
-        bool hovered, held;
-        bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
-        if (pressed) *v = !(*v);
-        
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        // Фон карточки
-        draw->AddRectFilled(bb.Min, bb.Max, IM_COL32(19, 18, 30, 255), 8.0f);
-        draw->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 255, hovered ? 32 : 18), 8.0f, 0, 1.0f);
-        
-        // Текст
-        draw->AddText(ImVec2(pos.x + 14, pos.y + 12), IM_COL32(235, 235, 242, 255), label);
-        if (description[0]) {
-            draw->AddText(ImVec2(pos.x + 14, pos.y + 28), IM_COL32(125, 125, 140, 255), description);
-        }
-        
-        // Переключатель справа
-        float swW = 32.0f;
-        float swH = 18.0f;
-        ImVec2 swMin(bb.Max.x - swW - 14, pos.y + 13);
-        ImVec2 swMax(swMin.x + swW, swMin.y + swH);
-        ImU32 trackCol = *v ? IM_COL32(238, 238, 245, 255) : IM_COL32(32, 30, 46, 255);
-        draw->AddRectFilled(swMin, swMax, trackCol, swH * 0.5f);
-        float knobR = 7.0f;
-        float knobX = *v ? (swMax.x - knobR - 2.0f) : (swMin.x + knobR + 2.0f);
-        ImU32 knobCol = *v ? IM_COL32(15, 14, 24, 255) : IM_COL32(130, 130, 145, 255);
-        draw->AddCircleFilled(ImVec2(knobX, swMin.y + swH * 0.5f), knobR, knobCol);
-        
-        return pressed;
-    }
-    
-    // Категория (collapsible секция)
-    bool simple_category(const char* label) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.92f, 1.0f), "%s", label);
-        ImGui::Separator();
-        return true;
-    }
-    
-    void end_category() {
-        ImGui::Spacing();
-    }
-}
-
-#pragma mark - Векторный логотип "A"
-
-void DrawLogoGradient(ImDrawList* draw, ImVec2 center, float size) {
+// Векторный логотип "A" (fallback, если шрифт не загрузился)
+void DrawLogoVector(ImDrawList* draw, ImVec2 center, float size) {
     float s = size;
-    
-    // Свечение
     ImU32 glowColor = IM_COL32(234, 193, 251, 40);
     draw->AddCircleFilled(center, s * 1.2f, glowColor);
     
-    // Основная форма "A"
     ImVec2 p1(center.x - s * 0.3f, center.y - s * 0.55f);
     ImVec2 p2(center.x + s * 0.3f, center.y - s * 0.55f);
     ImVec2 p3(center.x + s * 0.7f, center.y + s * 0.55f);
     ImVec2 p4(center.x - s * 0.7f, center.y + s * 0.55f);
+    draw->AddQuadFilled(p1, p2, p3, p4, IM_COL32(218, 221, 216, 255));
     
-    // Градиент от белого к фиолетовому
-    ImU32 col1 = IM_COL32(218, 221, 216, 255);
-    ImU32 col2 = IM_COL32(234, 193, 251, 255);
-    draw->AddQuadFilled(p1, p2, p3, p4, col1);
-    
-    // Вырезы
     ImU32 bg = IM_COL32(15, 14, 24, 255);
     draw->AddTriangleFilled(ImVec2(center.x - s * 0.7f, center.y - s * 0.1f),
         ImVec2(center.x - s * 0.4f, center.y + s * 0.1f),
@@ -123,6 +48,51 @@ void DrawLogoGradient(ImDrawList* draw, ImVec2 center, float size) {
         ImVec2(center.x + s * 0.25f, center.y + s * 0.55f), bg);
     draw->AddCircleFilled(ImVec2(center.x, center.y - s * 0.15f), s * 0.08f, bg);
 }
+
+// Pill-тумблер
+bool RenderPillToggle(const char* label, bool* v, float width) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) return false;
+    const ImGuiID id = window->GetID(label);
+    float height = 40.0f;
+    ImVec2 pos = window->DC.CursorPos;
+    ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
+    ImGui::ItemSize(bb);
+    if (!ImGui::ItemAdd(bb, id)) return false;
+    bool hovered, held;
+    bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+    if (pressed) *v = !(*v);
+    
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(bb.Min, bb.Max, IM_COL32(20, 20, 30, 255), 20.0f);
+    draw->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 255, hovered ? 40 : 20), 20.0f, 0, 1.0f);
+    draw->AddText(ImVec2(pos.x + 16, pos.y + 12), IM_COL32(235, 235, 242, 255), label);
+    
+    float swW = 32.0f, swH = 18.0f;
+    ImVec2 swMin(bb.Max.x - swW - 14, pos.y + 11);
+    ImVec2 swMax(swMin.x + swW, swMin.y + swH);
+    ImU32 trackCol = *v ? IM_COL32(124, 92, 255, 255) : IM_COL32(40, 40, 55, 255);
+    draw->AddRectFilled(swMin, swMax, trackCol, swH * 0.5f);
+    float knobR = 7.0f;
+    float knobX = *v ? (swMax.x - knobR - 2.0f) : (swMin.x + knobR + 2.0f);
+    draw->AddCircleFilled(ImVec2(knobX, swMin.y + swH * 0.5f), knobR, IM_COL32(255, 255, 255, 255));
+    
+    return pressed;
+}
+
+// Карточка
+void BeginCard(const char* title, float width, float height) {
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), IM_COL32(18, 18, 28, 255), 10.0f);
+    draw->AddRect(pos, ImVec2(pos.x + width, pos.y + height), IM_COL32(255, 255, 255, 25), 10.0f, 0, 1.0f);
+    draw->AddText(ImVec2(pos.x + 16, pos.y + 14), IM_COL32(235, 235, 242, 255), title);
+    draw->AddLine(ImVec2(pos.x, pos.y + 42), ImVec2(pos.x + width, pos.y + 42), IM_COL32(255, 255, 255, 20), 1.0f);
+    ImGui::BeginChild(title, ImVec2(width, height), false, ImGuiWindowFlags_NoScrollbar);
+    ImGui::SetCursorPos(ImVec2(16, 52));
+}
+
+void EndCard() { ImGui::EndChild(); }
 
 #pragma mark - Metal Host View
 
@@ -164,6 +134,8 @@ void DrawLogoGradient(ImDrawList* draw, ImVec2 center, float size) {
 @property (nonatomic, assign) CGPoint menuOffset;
 @property (nonatomic, assign) BOOL isDragging;
 @property (nonatomic, assign) CGPoint dragStartPos;
+@property (nonatomic, assign) ImFont* mainFont;
+@property (nonatomic, assign) ImFont* logoFont;
 @end
 
 @implementation AntisocialGUIManager
@@ -202,8 +174,8 @@ static AntisocialGUIManager *sharedInstance = nil;
     CGFloat scale = [UIScreen mainScreen].scale;
     CGSize screenSize = keyWindow.bounds.size;
     
-    CGFloat menuW = 620.0f;
-    CGFloat menuH = 380.0f;
+    CGFloat menuW = 580.0f;
+    CGFloat menuH = 360.0f;
     CGFloat posX = (screenSize.width - menuW) * 0.5f;
     CGFloat posY = (screenSize.height - menuH) * 0.5f;
     
@@ -232,13 +204,36 @@ static AntisocialGUIManager *sharedInstance = nil;
     io.DisplayFramebufferScale = ImVec2(scale, scale);
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     
-    // Загружаем шрифты
-    io.Fonts->AddFontFromMemoryTTF(instrument_sans_medium_ttf, sizeof(instrument_sans_medium_ttf), 13.0f * 2.0f, nullptr, io.Fonts->GetGlyphRangesCyrillic());
-    io.FontGlobalScale = 0.5f;
+    // Загрузка шрифтов из памяти
+    // ⚠️ Если имена массивов другие - замени font_ttf, logo_ttf на свои из .hpp файлов
+    
+    // Основной шрифт (Instrument Sans)
+    ImFontConfig fontCfg;
+    fontCfg.FontDataOwnedByAtlas = false;
+    self.mainFont = io.Fonts->AddFontFromMemoryTTF(
+        (void*)font_ttf,  // ← замени на правильное имя из font.hpp
+        sizeof(font_ttf),  // ← и здесь
+        14.0f * scale,
+        &fontCfg,
+        io.Fonts->GetGlyphRangesCyrillic()
+    );
+    
+    // Шрифт логотипа
+    ImFontConfig logoCfg;
+    logoCfg.FontDataOwnedByAtlas = false;
+    self.logoFont = io.Fonts->AddFontFromMemoryTTF(
+        (void*)logo_ttf,  // ← замени на правильное имя из logo.hpp
+        sizeof(logo_ttf),  // ← и здесь
+        48.0f * scale,
+        &logoCfg
+    );
+    
+    // Компенсация retina
+    io.FontGlobalScale = 1.0f / scale;
     
     ImGui_ImplMetal_Init(self.device);
     
-    self.selectedSidebarTab = 3; // Movement по умолчанию
+    self.selectedSidebarTab = 3; // Movement
     self.selectedTopTab = 0;
     self.isReady = YES;
     
@@ -246,11 +241,11 @@ static AntisocialGUIManager *sharedInstance = nil;
     CGFloat buttonSize = 50.0f;
     self.toggleButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.toggleButton.frame = CGRectMake(screenSize.width - 70, 40, buttonSize, buttonSize);
-    self.toggleButton.backgroundColor = [UIColor colorWithRed:0.08 green:0.07 blue:0.13 alpha:0.9];
+    self.toggleButton.backgroundColor = [UIColor colorWithRed:0.15 green:0.12 blue:0.25 alpha:0.9];
     self.toggleButton.layer.cornerRadius = 25;
     self.toggleButton.layer.borderWidth = 1;
     self.toggleButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
-    [self.toggleButton setTitle:@"A" forState:UIControlStateNormal];
+    [self.toggleButton setTitle:@"S" forState:UIControlStateNormal];
     [self.toggleButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.toggleButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     [self.toggleButton addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
@@ -259,7 +254,7 @@ static AntisocialGUIManager *sharedInstance = nil;
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(render)];
     [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     
-    NSLog(@"[Cheat] Antisocial GUI ready");
+    NSLog(@"[Cheat] GUI ready with custom fonts");
 }
 
 - (void)toggleMenu:(UIButton *)button {
@@ -286,16 +281,16 @@ static AntisocialGUIManager *sharedInstance = nil;
     ImGui_ImplMetal_NewFrame(renderPass);
     ImGui::NewFrame();
     
-    const float W = 620.0f;
-    const float H = 380.0f;
-    const float sidebarW = 148.0f;
+    const float W = 580.0f;
+    const float H = 360.0f;
+    const float sidebarW = 140.0f;
     const float topbarH = 48.0f;
     
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.051f, 0.047f, 0.086f, 0.99f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.06f, 0.09f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.1f));
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(W, H), ImGuiCond_Always);
     ImGui::Begin("##main_ui", nullptr,
@@ -306,12 +301,20 @@ static AntisocialGUIManager *sharedInstance = nil;
     ImVec2 wp = ImGui::GetWindowPos();
     
     // Фон сайдбара
-    draw->AddRectFilled(wp, ImVec2(wp.x + sidebarW, wp.y + H), IM_COL32(15, 14, 24, 255), 12.0f, ImDrawFlags_RoundCornersLeft);
-    draw->AddLine(ImVec2(wp.x + sidebarW, wp.y), ImVec2(wp.x + sidebarW, wp.y + H), IM_COL32(255, 255, 255, 16), 1.0f);
-    draw->AddLine(ImVec2(wp.x + sidebarW, wp.y + topbarH), ImVec2(wp.x + W, wp.y + topbarH), IM_COL32(255, 255, 255, 16), 1.0f);
+    draw->AddRectFilled(wp, ImVec2(wp.x + sidebarW, wp.y + H), IM_COL32(12, 12, 18, 255), 12.0f, ImDrawFlags_RoundCornersLeft);
+    draw->AddLine(ImVec2(wp.x + sidebarW, wp.y), ImVec2(wp.x + sidebarW, wp.y + H), IM_COL32(255, 255, 255, 18), 1.0f);
+    draw->AddLine(ImVec2(wp.x + sidebarW, wp.y + topbarH), ImVec2(wp.x + W, wp.y + topbarH), IM_COL32(255, 255, 255, 18), 1.0f);
     
-    // Векторный логотип "A" с градиентом
-    DrawLogoGradient(draw, ImVec2(wp.x + sidebarW * 0.5f, wp.y + 42.0f), 28.0f);
+    // Логотип (шрифт или векторный fallback)
+    if (self.logoFont) {
+        ImGui::PushFont(self.logoFont);
+        ImVec2 glyph_size = ImGui::CalcTextSize("A");
+        ImGui::SetCursorPos(ImVec2(sidebarW * 0.5f - glyph_size.x * 0.5f, 18.0f));
+        ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.98f, 1.0f), "A");
+        ImGui::PopFont();
+    } else {
+        DrawLogoVector(draw, ImVec2(wp.x + sidebarW * 0.5f, wp.y + 42.0f), 28.0f);
+    }
     
     // Навигация сайдбара
     const char* sidebarItems[] = {"Visuals", "Combat", "World", "Movement", "Misc", "Configs", "Inventory"};
@@ -325,7 +328,7 @@ static AntisocialGUIManager *sharedInstance = nil;
         ImGui::PushStyleColor(ImGuiCol_Button, active ? ImVec4(0.15f, 0.12f, 0.25f, 1.0f) : ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.15f, 0.28f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.17f, 0.30f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(0.95f, 0.95f, 0.98f, 1.0f) : ImVec4(0.50f, 0.50f, 0.58f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(0.95f, 0.95f, 0.98f, 1.0f) : ImVec4(0.55f, 0.55f, 0.62f, 1.0f));
         if (ImGui::Button(sidebarItems[i], ImVec2(sidebarW - 24, 36))) {
             self.selectedSidebarTab = i;
         }
@@ -342,7 +345,7 @@ static AntisocialGUIManager *sharedInstance = nil;
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(0.95f, 0.95f, 0.98f, 1.0f) : ImVec4(0.48f, 0.48f, 0.56f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(0.95f, 0.95f, 0.98f, 1.0f) : ImVec4(0.50f, 0.50f, 0.58f, 1.0f));
         if (ImGui::Button(topItems[i], ImVec2(80, 24))) {
             self.selectedTopTab = i;
         }
@@ -350,7 +353,7 @@ static AntisocialGUIManager *sharedInstance = nil;
         ImGui::SameLine(0, 12);
     }
     
-    // Обработка перетаскивания за таск-бар
+    // Перетаскивание за таск-бар
     ImVec2 mousePos = ImGui::GetIO().MousePos;
     bool mouseInTitlebar = (mousePos.x >= sidebarW && mousePos.x <= W && mousePos.y >= 0 && mousePos.y <= topbarH);
     
@@ -373,30 +376,30 @@ static AntisocialGUIManager *sharedInstance = nil;
     
     if (self.selectedSidebarTab == 0) { // Visuals
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        elem::simple_category("ESP Demo");
-        elem::toggle("Box ESP", &g_esp_box, "Draws box around enemies");
-        elem::toggle("Health Bar", &g_esp_health, "Shows health indicator");
-        elem::toggle("Nickname", &g_esp_nickname, "Shows player names");
-        elem::end_category();
+        BeginCard("ESP", colWidth, 200.0f);
+        RenderPillToggle("Box ESP", &g_esp_box, colWidth - 32.0f);
+        RenderPillToggle("Health Bar", &g_esp_health, colWidth - 32.0f);
+        RenderPillToggle("Nickname", &g_esp_nickname, colWidth - 32.0f);
+        EndCard();
     }
     else if (self.selectedSidebarTab == 1) { // Combat
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        elem::simple_category("Combat Settings");
-        elem::toggle("Wallbang", &g_wallbang, "Shoot through walls");
-        elem::toggle("NoRecoil", &g_norecoil, "Zero weapon recoil");
-        elem::end_category();
+        BeginCard("Combat", colWidth, 200.0f);
+        RenderPillToggle("Wallbang", &g_wallbang, colWidth - 32.0f);
+        RenderPillToggle("NoRecoil", &g_norecoil, colWidth - 32.0f);
+        EndCard();
     }
     else if (self.selectedSidebarTab == 3) { // Movement
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        elem::simple_category("Movement");
-        elem::toggle("BunnyHop", &g_bunnyhop, "Auto jump on landing");
-        elem::end_category();
+        BeginCard("Movement", colWidth, 120.0f);
+        RenderPillToggle("BunnyHop", &g_bunnyhop, colWidth - 32.0f);
+        EndCard();
     }
     else if (self.selectedSidebarTab == 4) { // Misc
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        elem::simple_category("Misc");
-        elem::toggle("Offscreen", &g_esp_box, "Shows indicators out of view");
-        elem::end_category();
+        BeginCard("Misc", colWidth, 120.0f);
+        RenderPillToggle("Offscreen", &g_esp_box, colWidth - 32.0f);
+        EndCard();
     }
     else {
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
