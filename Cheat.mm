@@ -23,6 +23,7 @@ static bool g_simple_switch = false, g_auto_strafe = false, g_fast_drop = false;
 static int  g_slider = 0;
 static int  g_combo = 0;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
+static float g_gui_scale = 1.0f;  // масштаб GUI (0.7 - 1.3)
 
 // ===== Аниматоры =====
 static float anim_f(ImGuiID id, float target, float dur = 0.12f) {
@@ -110,7 +111,7 @@ static void toggle(const char* label, bool* v, const char* desc, std::function<v
     ImGui::PopStyleVar();
 }
 
-// ===== slider_int — ГРАДИЕНТ ПО ВСЕМУ ТРЕКУ =====
+// ===== slider_int — ГРАДИЕНТ ПО ВСЕМУ ТРЕКУ (белый→розовый) =====
 static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -134,7 +135,7 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     float trkY = pos.y + h - 8;
     ImVec2 trkMin(pos.x, trkY), trkMax(pos.x + width, trkY + 5);
     d->AddRectFilled(trkMin, trkMax, IM_COL32(55,55,66,255), 2.5f);
-    // ГРАДИЕНТ ПО ВСЕМУ ТРЕКУ (белый→розовый)
+    // ГРАДИЕНТ ПО ВСЕМУ ТРЕКУ
     d->AddRectFilledMultiColor(trkMin, trkMax,
         IM_COL32(255,255,255,255), IM_COL32(234,193,251,255),
         IM_COL32(234,193,251,255), IM_COL32(255,255,255,255));
@@ -186,7 +187,7 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     }
 }
 
-// ===== selectable =====
+// ===== selectable (с обводкой) =====
 static bool sel_custom(const char* label, bool selected) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -206,7 +207,7 @@ static bool sel_custom(const char* label, bool selected) {
     return pressed;
 }
 
-// ===== combo =====
+// ===== combo (с BeginPopup) =====
 static bool combo(const char* label, int* value, std::vector<std::string> entries) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -292,22 +293,41 @@ static void end_category(){ ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::EndC
 @property (nonatomic, assign) BOOL isReady, isMenuVisible, isDragging, wasVisible;
 @property (nonatomic, assign) int m_current, m_sub;
 @property (nonatomic, assign) CGPoint menuOffset, dragStartPos;
-@property (nonatomic, assign) float menuW, menuH;
+@property (nonatomic, assign) float baseW, baseH;
 @end
 @implementation AntisocialGUIManager
 static AntisocialGUIManager* sharedInst=nil;
 + (AntisocialGUIManager*)shared { if(!sharedInst) sharedInst=[[self alloc] init]; return sharedInst; }
 + (void)load { for(int i=1;i<=15;i++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [[AntisocialGUIManager shared] trySetup]; }); }
 - (UIWindow*)findKeyWindow { for(UIScene* s in UIApplication.sharedApplication.connectedScenes){ if(![s isKindOfClass:[UIWindowScene class]])continue; for(UIWindow* w in ((UIWindowScene*)s).windows) if(w.isKeyWindow) return w;} return nil; }
+
+- (void)updateSize {
+    // Базовый размер 620x370, масштабируется g_gui_scale
+    self.baseW = 620.0f * g_gui_scale;
+    self.baseH = 370.0f * g_gui_scale;
+    // Clamp по экрану
+    CGSize sc = [UIScreen mainScreen].bounds.size;
+    self.baseW = MIN(self.baseW, sc.width * 0.92f);
+    self.baseH = MIN(self.baseH, sc.height * 0.70f);
+    self.baseW = MAX(self.baseW, 320.0f);
+    self.baseH = MAX(self.baseH, 200.0f);
+    CGFloat px = (sc.width - self.baseW) * 0.5f;
+    CGFloat py = (sc.height - self.baseH) * 0.5f;
+    self.menuOffset = CGPointMake(px, py);
+    self.hostView.frame = CGRectMake(px, py, self.baseW, self.baseH);
+    CGFloat scale = [UIScreen mainScreen].scale;
+    self.metalLayer.drawableSize = CGSizeMake(self.baseW * scale, self.baseH * scale);
+    ImGui::GetIO().DisplaySize = ImVec2(self.baseW, self.baseH);
+}
+
 - (void)trySetup {
     if(self.hostView) return; UIWindow* kw=[self findKeyWindow]; if(!kw) return;
     CGFloat scale=[UIScreen mainScreen].scale; CGSize sc=kw.bounds.size;
-    // АДАПТИВНЫЙ РАЗМЕР
-    self.menuW = MAX(320.0f, MIN(620.0f, sc.width * 0.88f));
-    self.menuH = MAX(200.0f, MIN(370.0f, sc.height * 0.62f));
-    CGFloat px=(sc.width-self.menuW)*0.5, py=(sc.height-self.menuH)*0.5;
+    
+    self.baseW = 620.0f; self.baseH = 370.0f;
+    CGFloat px=(sc.width-self.baseW)*0.5, py=(sc.height-self.baseH)*0.5;
     self.menuOffset=CGPointMake(px,py);
-    self.hostView=[[UIOverlayHostView alloc] initWithFrame:CGRectMake(px,py,self.menuW,self.menuH)];
+    self.hostView=[[UIOverlayHostView alloc] initWithFrame:CGRectMake(px,py,self.baseW,self.baseH)];
     self.hostView.backgroundColor=[UIColor clearColor]; self.hostView.hidden=YES; self.hostView.userInteractionEnabled=NO;
     [kw addSubview:self.hostView];
     self.device=MTLCreateSystemDefaultDevice(); self.commandQueue=[self.device newCommandQueue];
@@ -315,9 +335,9 @@ static AntisocialGUIManager* sharedInst=nil;
     self.metalLayer.device=self.device; self.metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;
     self.metalLayer.framebufferOnly=NO; self.metalLayer.opaque=NO;
     self.metalLayer.backgroundColor=[UIColor clearColor].CGColor; self.metalLayer.contentsScale=scale;
-    self.metalLayer.drawableSize=CGSizeMake(self.menuW*scale,self.menuH*scale);
+    self.metalLayer.drawableSize=CGSizeMake(self.baseW*scale,self.baseH*scale);
     ImGui::CreateContext(); ImGuiIO& io=ImGui::GetIO();
-    io.DisplaySize=ImVec2(self.menuW,self.menuH); io.DisplayFramebufferScale=ImVec2(scale,scale);
+    io.DisplaySize=ImVec2(self.baseW,self.baseH); io.DisplayFramebufferScale=ImVec2(scale,scale);
     io.ConfigFlags|=ImGuiConfigFlags_NoMouseCursorChange;
     io.Fonts->TexGlyphPadding=1;
     ImFontConfig mc; mc.FontDataOwnedByAtlas=false;
@@ -362,21 +382,17 @@ static AntisocialGUIManager* sharedInst=nil;
     rp.colorAttachments[0].storeAction=MTLStoreActionStore; rp.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);
     ImGui_ImplMetal_NewFrame(rp); ImGui::NewFrame();
 
-    const float W=self.menuW, H=self.menuH;
+    const float W=self.baseW, H=self.baseH;
     const float left=W*0.23f, top=40;
     
-    // Анимация открытия GUI (fade-in + scale)
-    static float gui_alpha = 0.0f;
-    static float gui_scale = 0.9f;
-    if (self.isMenuVisible && !self.wasVisible) { gui_alpha = 0.0f; gui_scale = 0.9f; self.wasVisible = YES; }
-    gui_alpha = anim_f(ImGui::GetID("gui_alpha"), 1.0f, 0.25f);
-    gui_scale = anim_f(ImGui::GetID("gui_scale"), 1.0f, 0.25f);
+    // Анимация открытия GUI (fade-in)
+    if (self.isMenuVisible && !self.wasVisible) { /* сброс триггера */ }
+    float gui_alpha = anim_f(ImGui::GetID("gui_alpha"), 1.0f, 0.25f);
     
     // Анимация смены вкладок (fade)
     static int prev_tab = -1;
-    static float tab_alpha = 1.0f;
-    if (prev_tab != self.m_current) { tab_alpha = 0.0f; prev_tab = self.m_current; }
-    tab_alpha = anim_f(ImGui::GetID("tab_alpha"), 1.0f, 0.20f);
+    if (prev_tab != self.m_current) { /* триггер */ prev_tab = self.m_current; }
+    float tab_alpha = anim_f(ImGui::GetID("tab_alpha"), 1.0f, 0.20f);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
@@ -426,6 +442,7 @@ static AntisocialGUIManager* sharedInst=nil;
                 float pd=tr.GetHeight()/2-tsz.y/2;
                 dl->AddText(tr.Min+ImVec2(pd*2,pd),ImGui::ColorConvertFloat4ToU32(txt),tabs[it]);
             }
+            // профиль ВНУТРИ сайдбара (как было)
             ImRect child_wr=ImGui::GetCurrentWindow()->Rect();
             ImRect pr=ImRect(ImVec2(child_wr.Min.x+11,child_wr.Max.y-10-38), child_wr.Max-ImVec2(10,10));
             dl->AddRectFilled(pr.Min,pr.Max,ImColor(255,255,255,7),8);
@@ -527,7 +544,7 @@ static AntisocialGUIManager* sharedInst=nil;
         }
         ImGui::PopStyleVar(2);
 
-        // drag — плавный, без рывков
+        // drag — плавный, интерполяция 0.25
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
         if(inBar && ImGui::IsMouseClicked(0)) {
@@ -540,7 +557,6 @@ static AntisocialGUIManager* sharedInst=nil;
             no.x=MAX(0,MIN(no.x,scr.width-W));
             no.y=MAX(0,MIN(no.y,scr.height-H));
             CGPoint current = self.hostView.frame.origin;
-            // Интерполяция 0.25 — плавно, но не "резиновый"
             CGPoint smoothed = CGPointMake(current.x + (no.x - current.x) * 0.25, current.y + (no.y - current.y) * 0.25);
             self.menuOffset=smoothed;
             self.hostView.frame=CGRectMake(smoothed.x,smoothed.y,W,H);
