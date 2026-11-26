@@ -208,15 +208,19 @@ static AntisocialGUIManager *sharedInstance = nil;
     // ⚠️ Если имена массивов другие - замени font_ttf, logo_ttf на свои из .hpp файлов
     
     // Основной шрифт (Instrument Sans)
-    ImFontConfig fontCfg;
-    fontCfg.FontDataOwnedByAtlas = false;
-    self.mainFont = io.Fonts->AddFontFromMemoryTTF(
-        (void*)font_ttf,  // ← замени на правильное имя из font.hpp
-        sizeof(font_ttf),  // ← и здесь
-        14.0f * scale,
-        &fontCfg,
-        io.Fonts->GetGlyphRangesCyrillic()
+       // Загрузка шрифтов из памяти
+    
+    // Основной шрифт (Instrument Sans) — массив в font.hpp называется font_medium!
+   ImFontConfig logoCfg;
+    logoCfg.FontDataOwnedByAtlas = false;
+    self.logoFont = io.Fonts->AddFontFromMemoryTTF(
+        (void*)logo_ttf,
+        sizeof(logo_ttf),
+        48.0f * scale,
+        &logoCfg
     );
+    
+    io.FontGlobalScale = 1.0f / scale;
     
     // Шрифт логотипа
     ImFontConfig logoCfg;
