@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <unordered_map>
 
 // ===== Состояния (готово к хукам) =====
 static bool g_wallbang = true, g_norecoil = true, g_bunnyhop = false;
@@ -21,7 +22,7 @@ static int  g_slider = 0;
 static int  g_combo = 0;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 
-// ===== Аниматор (эквивалент c_animator, duration 0.10s) =====
+// ===== Аниматор (duration 0.10s как оригинал) =====
 static float anim_f(ImGuiID id, float target, float dur = 0.10f) {
     static std::unordered_map<ImGuiID,float> m;
     float& cur = m[id];
@@ -77,7 +78,7 @@ static bool internal_toggle(const char* label, bool* v) {
     return pressed;
 }
 
-// ===== toggle (с описанием + advanced лямбдой) =====
+// ===== toggle (описание + advanced лямбда) =====
 static void toggle(const char* label, bool* v, const char* desc, std::function<void()> advanced = nullptr) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10,10));
     ImGui::BeginChild(label, ImVec2(ImGui::GetContentRegionAvail().x - 10, 0), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
@@ -119,7 +120,7 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     const ImRect total_bb(w->DC.CursorPos, frame_bb.Max);
     ImGui::ItemSize(total_bb, st.FramePadding.y);
     if (!ImGui::ItemAdd(total_bb, id, &frame_bb)) return false;
-    const bool hovered = ImGui::ItemHoverable(total_bb, id);
+    const bool hovered = ImGui::ItemHoverable(total_bb, id, ImGuiItemFlags_None);   // ← 3 аргумента
     ImRect grab_bb;
     bool changed = ImGui::SliderBehavior(total_bb, id, ImGuiDataType_S32, v, &vmin, &vmax, "%d", ImGuiSliderFlags_None, &grab_bb);
     if (changed) ImGui::MarkItemEdited(id);
@@ -175,7 +176,7 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     } else anim_f(id+7,0.f,0.08f);
 }
 
-// ===== selectable кастом (без синего) =====
+// ===== selectable кастом (без синего выделения) =====
 static bool sel_custom(const char* label, bool selected) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -200,7 +201,6 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     const ImGuiStyle& st = ImGui::GetStyle();
     const ImGuiID id = w->GetID(label);
     const ImVec2 ls = ImGui::CalcTextSize(label);
-    const ImVec2 pv = ImGui::CalcTextSize(entries[*value].c_str());
     const ImVec2 pos = w->DC.CursorPos;
     const float width = ImGui::GetContentRegionAvail().x;
     const ImRect drop(pos+ImVec2(0,ls.y+5), ImVec2(pos.x+width, pos.y+28+ls.y+5));
@@ -228,8 +228,8 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,open*st.Alpha));
     bool ret = ImGui::Begin("##dd", NULL, ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(4); ImGui::PopStyleColor(2);
+    bool changed = false;   // ← объявлено ДО if(ret)
     if (ret) {
-        bool changed=false;
         for (int i=0;i<(int)entries.size();i++){
             if (sel_custom(entries[i].c_str(), i==*value) && *value!=i){ changed=true; *value=i; }
         }
@@ -257,7 +257,7 @@ static void begin_category(const char* label){
 }
 static void end_category(){ ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::EndChild(); ImGui::PopStyleVar(); }
 
-// ===== internal_scroll (невидимый скролл, копия ui.cpp) =====
+// ===== internal_scroll (невидимый drag-скролл) =====
 static void internal_scroll(const char* label){
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     ImVec2 mn = w->InnerRect.Min, mx = w->InnerRect.Max;
@@ -375,10 +375,12 @@ static AntisocialGUIManager* sharedInst=nil;
                 ImGui::PushFont(logo_font);
                 ImVec2 gs=ImGui::CalcTextSize("A");
                 ImGui::SetCursorPos(ImVec2(left/2-gs.x/2,20));
+                ImVec2 fill_min=ImGui::GetCursorScreenPos();   // ← без GetClipRect
                 int v1=dl->VtxBuffer.Size;
                 ImGui::Text("A");
                 int v2=dl->VtxBuffer.Size;
-                ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,v1,v2,dl->GetClipRect().Min,dl->GetClipRect().Max,IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
+                ImVec2 fill_max=fill_min+gs;
+                ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,v1,v2,fill_min,fill_max,IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
                 ImGui::PopFont();
             }
             ImGui::ItemSize(ImVec2(0,10));
@@ -423,7 +425,7 @@ static AntisocialGUIManager* sharedInst=nil;
                 ImVec2 ts=ImVec2(ImGui::CalcTextSize(sub[it]).x+20,top);
                 if(ImGui::InvisibleButton(sub[it],ts)){ self.m_sub=it; child_alpha=0.f; }
                 ImRect tr(cc+ImVec2(0,6),cc+ts-ImVec2(0,5));
-                ImVec4 txt=anim_v(ImGui::GetID(sub[it]), (it==self.m_sub)?ImVec4(120/255.f,123/255.f,173/255.f,1):ImVec4(220/255.f,220/220/255.f,1));
+                ImVec4 txt=anim_v(ImGui::GetID(sub[it]), (it==self.m_sub)?ImVec4(120/255.f,123/255.f,173/255.f,1):ImVec4(220/255.f,220/255.f,220/255.f,1));   // ← исправлено
                 ImVec2 tsz=ImGui::CalcTextSize(sub[it]);
                 dl->AddText(tr.GetCenter()-tsz/2,ImGui::ColorConvertFloat4ToU32(txt),sub[it]);
                 ImGui::SameLine(0,0);
