@@ -12,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 #include <cmath>
+#include <cstdio>
 
 // === Состояния (готово к хукам) ===
 static bool g_wallbang = true;
@@ -28,7 +29,10 @@ static int   g_combo = 0;
 static ImVec4 g_col1 = ImVec4(0, 1, 0, 1);
 static ImVec4 g_col2 = ImVec4(1, 0, 0, 1);
 
-// === Аниматор (лёгкий, без std::any) ===
+// === Вспомогательные ===
+static ImVec4 lerp4(ImVec4 a, ImVec4 b, float t) {
+    return ImVec4(a.x+(b.x-a.x)*t, a.y+(b.y-a.y)*t, a.z+(b.z-a.z)*t, a.w+(b.w-a.w)*t);
+}
 static float anim_f(ImGuiID id, float target, float speed = 12.0f) {
     static std::unordered_map<ImGuiID, float> m;
     float& cur = m[id];
@@ -85,30 +89,24 @@ static void custom_toggle(const char* label, bool* v, const char* description = 
     const ImRect check_bb(total_bb.Max.x - square_sz*2 + 10, total_bb.Min.y + 2, total_bb.Max.x, total_bb.Max.y - 2);
 
     float st = anim_f(id, *v ? 1.0f : 0.0f);
-    ImVec4 off_outline = ImVec4(55/255.f,55/255.f,66/255.f,1);
-    ImVec4 on_outline  = ImVec4(1,1,1,1);
-    ImVec4 outline = ImLerp(off_outline, on_outline, st);
-    ImVec4 pill    = ImLerp(ImVec4(55/255.f,55/255.f,66/255.f,1), ImVec4(0,0,0,1), st);
-    ImVec4 text    = (*v || hovered) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1);
-    text = anim_v(id+1, text);
+    ImVec4 outline = lerp4(ImVec4(55/255.f,55/255.f,66/255.f,1), ImVec4(1,1,1,1), st);
+    ImVec4 pill    = lerp4(ImVec4(55/255.f,55/255.f,66/255.f,1), ImVec4(0,0,0,1), st);
+    ImVec4 text    = anim_v(id+1, (*v || hovered) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
 
     ImDrawList* d = window->DrawList;
-    // фон трека + градиент
     int vs = d->VtxBuffer.Size;
-    d->AddRectFilled(check_bb.Min, check_bb.Max, IM_COL32(25,25,25, (int)(st*255)), 666);
+    d->AddRectFilled(check_bb.Min, check_bb.Max, IM_COL32(25,25,25,(int)(st*255)), 666);
     int ve = d->VtxBuffer.Size;
     if (ve > vs)
         ImGui::ShadeVertsLinearColorGradientKeepAlpha(d, vs, ve, check_bb.Min, check_bb.Max,
             IM_COL32(218,221,216,255), IM_COL32(234,193,251,255));
     d->AddRect(check_bb.Min, check_bb.Max, ImGui::ColorConvertFloat4ToU32(outline), 666);
-    // кружок
     float knobX = check_bb.Min.x + 8 + 14*st;
     d->AddCircleFilled(ImVec2(knobX, check_bb.GetCenter().y), 5.0f, ImGui::ColorConvertFloat4ToU32(pill), 200);
-    // текст
     d->AddText(total_bb.Min, ImGui::ColorConvertFloat4ToU32(text), label);
 
     if (description) {
-        ImGui::SetCursorPosX(total_bb.Min.x - pos.x);
+        ImGui::SetCursorPosX(0);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(155/255.f,155/255.f,155/255.f,1));
         ImGui::TextWrapped("%s", description);
         ImGui::PopStyleColor();
@@ -128,13 +126,14 @@ static void custom_slider(const char* label, float* v, float vmin, float vmax, c
     ImGui::ItemSize(total_bb, 4.0f);
     if (!ImGui::ItemAdd(total_bb, id, &frame_bb)) return;
 
-    bool hovered = ImGui::ItemHoverable(total_bb, id, window->DC.ItemFlags);
+    // Версия-безопасный hover (без window->DC.ItemFlags!)
+    bool hovered = ImGui::IsMouseHoveringRect(total_bb.Min, total_bb.Max);
+
     ImRect grab_bb;
     bool changed = ImGui::SliderBehavior(total_bb, id, ImGuiDataType_Float, v, &vmin, &vmax, fmt, ImGuiSliderFlags_None, &grab_bb);
 
     float grab = anim_f(id+2, grab_bb.Max.x - frame_bb.Min.x, 18.0f);
-    ImVec4 text = (ImGui::IsItemActive() || hovered || changed) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1);
-    text = anim_v(id+3, text);
+    ImVec4 text = anim_v(id+3, (ImGui::IsItemActive() || hovered || changed) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
 
     ImDrawList* d = window->DrawList;
     d->AddRect(frame_bb.Min + ImVec2(0,2), frame_bb.Max - ImVec2(0,2), IM_COL32(55,55,66,255), 12);
@@ -142,9 +141,8 @@ static void custom_slider(const char* label, float* v, float vmin, float vmax, c
     d->AddRectFilled(frame_bb.Min, ImVec2(frame_bb.Min.x + grab, frame_bb.Max.y), IM_COL32(25,25,25,255), 12);
     int ve = d->VtxBuffer.Size;
     if (ve > vs)
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(d, vs, ve, frame_bb.Min, ImVec2(grab_bb.Max.x, frame_bb.Max.y),
+        ImGui::ShadeVertsLinearColorGradientKeepAlpha(d, vs, ve, frame_bb.Min, ImVec2(frame_bb.Min.x + grab, frame_bb.Max.y),
             IM_COL32(218,221,216,255), IM_COL32(234,193,251,255));
-    // белый кружок-ползунок (как на скрине оригинала)
     d->AddCircleFilled(ImVec2(frame_bb.Min.x + grab, frame_bb.GetCenter().y), 6.0f, IM_COL32(255,255,255,255), 200);
     d->AddCircle(ImVec2(frame_bb.Min.x + grab, frame_bb.GetCenter().y), 6.0f, IM_COL32(0,0,0,80), 200, 1.0f);
 
@@ -172,13 +170,12 @@ static void custom_combo(const char* label, int* value, const char* items[], int
     bool pressed = ImGui::ButtonBehavior(total_bb, id, &hovered, &held);
     if (pressed) ImGui::OpenPopup("##combo_popup");
 
-    ImVec4 text = (hovered || ImGui::IsPopupOpen("##combo_popup")) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/155.f,155/255.f,1);
-    text = anim_v(id+4, text);
+    bool open = ImGui::IsPopupOpen("##combo_popup");
+    ImVec4 text = anim_v(id+4, (hovered || open) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImDrawList* d = window->DrawList;
     d->AddRect(box.Min, box.Max, IM_COL32(55,55,66,255), 6);
     d->AddText(total_bb.Min, ImGui::ColorConvertFloat4ToU32(text), label);
     d->AddText(box.Min + ImVec2(8, 6), ImGui::ColorConvertFloat4ToU32(text), items[*value]);
-    // стрелка вниз
     ImVec2 ar(box.Max.x - 14, box.Min.y + 10);
     d->AddTriangleFilled(ar, ImVec2(ar.x+8, ar.y), ImVec2(ar.x+4, ar.y+6), ImGui::ColorConvertFloat4ToU32(text));
 
@@ -199,11 +196,11 @@ static void custom_combo(const char* label, int* value, const char* items[], int
     }
 }
 
-#pragma mark - Colorpicker (два квадратика на линии + popup)
+#pragma mark - Colorpicker (два квадратика + popup)
 static void custom_color(const char* label, ImVec4* colors, int count) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return;
-    const ImGuiID id = window::GetID(label);
+    const ImGuiID id = window->GetID(label);   // ← исправлено: было window::GetID
     const ImVec2 label_size = ImGui::CalcTextSize(label);
     const float w = ImGui::GetContentRegionAvail().x;
     const float sz = ImGui::GetFrameHeight();
@@ -215,19 +212,15 @@ static void custom_color(const char* label, ImVec4* colors, int count) {
     ImDrawList* d = window->DrawList;
     d->AddText(total_bb.Min, IM_COL32(155,155,155,255), label);
     for (int i = 0; i < count; i++) {
-        ImRect cb(ImVec2(total_bb.Max.x - (sz+8)*(count-i) + 8*(count-i-1) - 8*i, total_bb.Min.y),
-                  ImVec2(total_bb.Max.x - (sz+8)*(count-i-1) - 8*(i), total_bb.Min.y + sz));
-        // проще: прижать справа
         float x1 = total_bb.Max.x - sz - 8 - (sz+8)*i;
-        cb.Min = ImVec2(x1, total_bb.Min.y); cb.Max = ImVec2(x1+sz, total_bb.Min.y+sz);
+        ImRect cb(ImVec2(x1, total_bb.Min.y), ImVec2(x1+sz, total_bb.Min.y+sz));
         ImGuiID cid = id * 10 + i + 1;
         ImGui::ItemAdd(cb, cid);
         bool h2, hd; bool p2 = ImGui::ButtonBehavior(cb, cid, &h2, &hd);
-        if (p2) { ImGui::OpenPopup("##color_popup"); }
+        if (p2) ImGui::OpenPopup("##color_popup");
         d->AddRectFilled(cb.Min, cb.Max, ImGui::ColorConvertFloat4ToU32(colors[i]), 3);
         d->AddRect(cb.Min, cb.Max, IM_COL32(55,55,66,255), 3);
     }
-    ImGui::SetNextWindowSize(ImVec2(0,0));
     if (ImGui::BeginPopup("##color_popup")) {
         float a = anim_f(id+6, 1.0f, 16.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, a);
@@ -248,7 +241,8 @@ static void begin_category(const char* title, float w, float h) {
     ImGui::Text("%s", title);
     ImGui::PopStyleColor();
     ImGui::SetCursorPosX(0);
-    d->AddLine(ImVec2(pos.x, pos.y+24), ImVec2(pos.x+w, pos.y+24), IM_COL32(41,43,55,255), 1);
+    ImVec2 lp = ImGui::GetCursorScreenPos();
+    d->AddLine(lp, ImVec2(lp.x+w, lp.y), IM_COL32(41,43,55,255), 1);
     ImGui::Dummy(ImVec2(0,4));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10,8));
     ImGui::BeginChild(title, ImVec2(w, h-30), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -288,14 +282,16 @@ static void end_category() {
 @property (nonatomic, assign) BOOL isReady, isMenuVisible, isDragging;
 @property (nonatomic, assign) int selectedSidebarTab, selectedTopTab;
 @property (nonatomic, assign) CGPoint menuOffset, dragStartPos;
-@property (nonatomic, assign) ImFont* mainFont; @property (nonatomic, assign) ImFont* logoFont;
+@property (nonatomic, assign) ImFont* mainFont;
+@property (nonatomic, assign) ImFont* logoFont;
 @end
 
 @implementation AntisocialGUIManager
 static AntisocialGUIManager *sharedInstance = nil;
 + (AntisocialGUIManager*)shared { if(!sharedInstance) sharedInstance=[[self alloc] init]; return sharedInstance; }
 + (void)load {
-    for (int i=1;i<=15;i++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [[AntisocialGUIManager shared] trySetup]; });
+    for (int i=1;i<=15;i++)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [[AntisocialGUIManager shared] trySetup]; });
 }
 - (UIWindow*)findKeyWindow {
     for (UIScene* s in UIApplication.sharedApplication.connectedScenes) {
@@ -367,12 +363,10 @@ static AntisocialGUIManager *sharedInstance = nil;
     ImGui::Begin("##main_ui",nullptr,ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList* d=ImGui::GetWindowDrawList(); ImVec2 wp=ImGui::GetWindowPos();
 
-    // фон сайдбара
     d->AddRectFilled(wp,ImVec2(wp.x+sidebarW,wp.y+H),IM_COL32(12,12,18,255),10,ImDrawFlags_RoundCornersLeft);
     d->AddLine(ImVec2(wp.x+sidebarW,wp.y),ImVec2(wp.x+sidebarW,wp.y+H),IM_COL32(255,255,255,16),1);
     d->AddLine(ImVec2(wp.x+sidebarW,wp.y+topbarH),ImVec2(wp.x+W,wp.y+topbarH),IM_COL32(255,255,255,16),1);
 
-    // логотип обрезан сверху (foreground)
     if(self.logoFont){
         ImDrawList* fg=ImGui::GetForegroundDrawList();
         ImGui::PushFont(self.logoFont);
@@ -381,7 +375,6 @@ static AntisocialGUIManager *sharedInstance = nil;
         ImGui::PopFont();
     }
 
-    // сайдбар табы с hover-анимацией
     const char* side[]={"Visuals","Combat","World","Movement","Misc","Configs"};
     ImGui::SetCursorPos(ImVec2(8,52));
     ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign,ImVec2(0,0.5f));
@@ -391,8 +384,9 @@ static AntisocialGUIManager *sharedInstance = nil;
         bool active=(self.selectedSidebarTab==i);
         ImGui::SetCursorPosX(8);
         ImGuiID bid=ImGui::GetID(side[i]);
-        float hov=anim_f(bid+100, ImGui::IsMouseHoveringRect(ImGui::GetCursorScreenPos(),ImGui::GetCursorScreenPos()+ImVec2(sidebarW-16,30))?1:0, 14);
-        ImVec4 bg=ImLerp(ImVec4(0,0,0,0), ImVec4(0.15f,0.12f,0.25f,1), active?1:hov*0.6f);
+        ImVec2 cp=ImGui::GetCursorScreenPos();
+        float hov=anim_f(bid+100, ImGui::IsMouseHoveringRect(cp,cp+ImVec2(sidebarW-16,30))?1.0f:0.0f, 14);
+        ImVec4 bg=lerp4(ImVec4(0,0,0,0), ImVec4(0.15f,0.12f,0.25f,1), active?1.0f:hov*0.6f);
         ImGui::PushStyleColor(ImGuiCol_Button,bg);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,bg);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,bg);
@@ -403,13 +397,11 @@ static AntisocialGUIManager *sharedInstance = nil;
     }
     ImGui::PopStyleVar(3);
 
-    // профиль
     ImVec2 pp(wp.x+10,wp.y+H-34);
     d->AddCircle(ImVec2(pp.x+8,pp.y+8),7,IM_COL32(255,255,255,200),0,1.5f);
     d->AddText(ImVec2(pp.x+20,pp.y+2),IM_COL32(235,235,242,255),"@STANDLEO");
     d->AddText(ImVec2(pp.x+20,pp.y+16),IM_COL32(255,215,0,255),"Premium");
 
-    // top tabs
     const char* top[]={"General","Advanced"};
     ImGui::SetCursorPos(ImVec2(sidebarW+16,8));
     for(int i=0;i<2;i++){
@@ -422,7 +414,6 @@ static AntisocialGUIManager *sharedInstance = nil;
         ImGui::PopStyleColor(4); ImGui::SameLine(0,8);
     }
 
-    // drag
     ImVec2 mp=ImGui::GetIO().MousePos;
     bool inBar=(mp.x>=sidebarW&&mp.x<=W&&mp.y>=0&&mp.y<=topbarH);
     if(inBar&&ImGui::IsMouseClicked(0)){self.isDragging=YES;self.dragStartPos=CGPointMake(mp.x-self.menuOffset.x,mp.y-self.menuOffset.y);}
