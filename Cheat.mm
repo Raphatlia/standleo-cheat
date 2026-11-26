@@ -109,39 +109,22 @@ static void toggle(const char* label, bool* v, const char* desc, std::function<v
     ImGui::PopStyleVar();
 }
 
-// ===== slider_int =====
+// ===== slider_int - стандартный с кастомными стилями =====
 static bool slider_int(const char* label, int* v, int vmin, int vmax) {
-    ImGuiWindow* w = ImGui::GetCurrentWindow();
-    if (w->SkipItems) return false;
-    const ImGuiStyle& st = ImGui::GetStyle();
-    const ImGuiID id = w->GetID(label);
-    const float width = ImGui::GetContentRegionAvail().x;
-    const ImVec2 ls = ImGui::CalcTextSize(label, NULL, true);
-    const ImRect frame_bb(w->DC.CursorPos + ImVec2(0, ls.y + st.FramePadding.y), w->DC.CursorPos + ImVec2(0, ls.y + st.FramePadding.y) + ImVec2(width, st.FramePadding.y*4));
-    const ImRect total_bb(w->DC.CursorPos, frame_bb.Max);
-    ImGui::ItemSize(total_bb, st.FramePadding.y);
-    if (!ImGui::ItemAdd(total_bb, id, &frame_bb)) return false;
-    const bool hovered = ImGui::ItemHoverable(total_bb, id, ImGuiItemFlags_None);
-    ImRect grab_bb;
-    bool changed = ImGui::SliderBehavior(total_bb, id, ImGuiDataType_S32, v, &vmin, &vmax, "%d", ImGuiSliderFlags_None, &grab_bb);
-    if (changed) ImGui::MarkItemEdited(id);
-    float grab = anim_f(id+5, grab_bb.Max.x - frame_bb.Min.x, 0.06f);
-    ImVec4 text = anim_v(id+6, (ImGui::IsItemActive()||hovered||changed) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
-    ImDrawList* d = w->DrawList;
-    d->AddRect(frame_bb.Min+ImVec2(0,2), frame_bb.Max-ImVec2(0,2), ImColor(55,55,66,(int)(st.Alpha*255)), 8);
-    int vs = d->VtxBuffer.Size;
-    d->AddRectFilled(frame_bb.Min, ImVec2(frame_bb.Min.x+grab, frame_bb.Max.y), ImColor(25,25,25,(int)(st.Alpha*255)), 8);
-    int ve = d->VtxBuffer.Size;
-    if (ve>vs) ImGui::ShadeVertsLinearColorGradientKeepAlpha(d,vs,ve,frame_bb.Min,ImVec2(frame_bb.Min.x+grab,frame_bb.Max.y),IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
-    char vb[64]; snprintf(vb,sizeof(vb),"%d",*v);
-    ImVec2 sep = ImGui::CalcTextSize(">>");
-    d->AddText(total_bb.Min+ImVec2(ls.x+5,0), ImColor(65,65,65), ">>");
-    d->AddText(total_bb.Min+ImVec2(ls.x+5+sep.x+5,0), ImColor(155,155,155), vb);
-    d->AddText(total_bb.Min, ImGui::ColorConvertFloat4ToU32(text), label);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(55/255.f, 55/255.f, 66/255.f, 1));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(70/255.f, 70/255.f, 80/255.f, 1));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(80/255.f, 80/255.f, 90/255.f, 1));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(218/255.f, 221/255.f, 216/255.f, 1));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(234/255.f, 193/255.f, 251/255.f, 1));
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 12);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8);
+    bool changed = ImGui::SliderInt(label, v, vmin, vmax);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(5);
     return changed;
 }
 
-// ===== colorpicker (два разных popup) =====
+// ===== colorpicker =====
 static void color(const char* label, std::vector<ImVec4*> colors) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return;
@@ -157,15 +140,12 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     ImDrawList* d = w->DrawList;
     ImVec2 min = total_bb.Max - ImVec2(0, sq-2);
     
-    static int selected_color_idx = 0;
-    
     for (int i=0;i<(int)colors.size();i++){
         ImRect cb(ImVec2(min.x - sq*(i+1) - 8*i, min.y), ImVec2(min.x - sq*i - 8*i, total_bb.Max.y-2));
         ImGuiID cid = id*100 + i + 1;
         ImGui::ItemAdd(cb, cid);
         bool h2,hd; bool p2 = ImGui::ButtonBehavior(cb, cid, &h2, &hd);
         if (p2) {
-            selected_color_idx = i;
             char popup_name[32];
             snprintf(popup_name, sizeof(popup_name), "##col_pop_%d", i);
             ImGui::OpenPopup(popup_name);
@@ -298,7 +278,6 @@ static void end_category(){ ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::EndC
 @property (nonatomic, assign) BOOL isReady, isMenuVisible, isDragging;
 @property (nonatomic, assign) int m_current, m_sub;
 @property (nonatomic, assign) CGPoint menuOffset, dragStartPos;
-@property (nonatomic, assign) CGFloat screenWidth, screenHeight;
 @end
 @implementation AntisocialGUIManager
 static AntisocialGUIManager* sharedInst=nil;
@@ -308,7 +287,6 @@ static AntisocialGUIManager* sharedInst=nil;
 - (void)trySetup {
     if(self.hostView) return; UIWindow* kw=[self findKeyWindow]; if(!kw) return;
     CGFloat scale=[UIScreen mainScreen].scale; CGSize sc=kw.bounds.size;
-    self.screenWidth=sc.width; self.screenHeight=sc.height;
     CGFloat W=620,H=370, px=(sc.width-W)*0.5, py=(sc.height-H)*0.5;
     self.menuOffset=CGPointMake(px,py);
     self.hostView=[[UIOverlayHostView alloc] initWithFrame:CGRectMake(px,py,W,H)];
@@ -437,12 +415,9 @@ static AntisocialGUIManager* sharedInst=nil;
             ImGui::EndChild();
         }
 
-        // разделители (убрал — были видны как границы)
-        // int s1=dl->VtxBuffer.Size;
-        // dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55),1);
-        // dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55),1);
-        // int s2=dl->VtxBuffer.Size;
-        // ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,s1,s2,wr.Min,wr.Max,IM_COL32(41,43,55,255),IM_COL32(21,23,35,255));
+        // разделители (тонкие, полупрозрачные)
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55,77),1);
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55,77),1);
 
         ImGui::SetCursorPos(ImVec2(left+11, top+10));
         float colw=(W-left-22-10)/2;
@@ -492,17 +467,26 @@ static AntisocialGUIManager* sharedInst=nil;
         }
         ImGui::PopStyleVar();
 
-        // drag с clamp
+        // drag с плавностью и clamp
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
-        if(inBar&&ImGui::IsMouseDown(0)){
-            if(!self.isDragging){self.isDragging=YES;self.dragStartPos=CGPointMake(mp.x-self.menuOffset.x,mp.y-self.menuOffset.y);}
+        if(inBar && ImGui::IsMouseClicked(0)) {
+            self.isDragging=YES;
+            self.dragStartPos=CGPointMake(mp.x-self.menuOffset.x,mp.y-self.menuOffset.y);
+        }
+        if(self.isDragging && ImGui::IsMouseDown(0)) {
             CGPoint no=CGPointMake(mp.x-self.dragStartPos.x,mp.y-self.dragStartPos.y);
-            no.x=MAX(0,MIN(no.x,self.screenWidth-W));
-            no.y=MAX(0,MIN(no.y,self.screenHeight-H));
-            self.menuOffset=no;
-            self.hostView.frame=CGRectMake(no.x,no.y,W,H);
-        } else self.isDragging=NO;
+            CGSize sc = [UIScreen mainScreen].bounds.size;
+            no.x=MAX(0,MIN(no.x,sc.width-W));
+            no.y=MAX(0,MIN(no.y,sc.height-H));
+            // Плавная интерполяция
+            CGPoint current = self.hostView.frame.origin;
+            CGPoint smoothed = CGPointMake(current.x + (no.x - current.x) * 0.2, current.y + (no.y - current.y) * 0.2);
+            self.menuOffset=smoothed;
+            self.hostView.frame=CGRectMake(smoothed.x,smoothed.y,W,H);
+        } else {
+            self.isDragging=NO;
+        }
 
         ImGui::End();
     }
