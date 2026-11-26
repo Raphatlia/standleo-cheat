@@ -6,13 +6,9 @@
 #include "imgui_impl_metal.h"
 
 // Шрифты из репо
-#include "font.hpp"           // Instrument Sans (основной)
-#include "logo.hpp"           // Шрифт для логотипа "A"
-#include "font_awesome.hpp"   // Иконки Font Awesome
-
-// ⚠️ ВАЖНО: Если имена массивов в твоих файлах другие, замени здесь:
-// Обычно это font_ttf, logo_ttf, font_awesome_ttf
-// Проверь первые строки каждого .hpp файла
+#include "font.hpp"
+#include "logo.hpp"
+#include "font_awesome.hpp"
 
 // Состояния переключателей
 static bool g_wallbang = true;
@@ -24,7 +20,6 @@ static bool g_esp_nickname = true;
 
 #pragma mark - Кастомные элементы
 
-// Векторный логотип "A" (fallback, если шрифт не загрузился)
 void DrawLogoVector(ImDrawList* draw, ImVec2 center, float size) {
     float s = size;
     ImU32 glowColor = IM_COL32(234, 193, 251, 40);
@@ -49,7 +44,6 @@ void DrawLogoVector(ImDrawList* draw, ImVec2 center, float size) {
     draw->AddCircleFilled(ImVec2(center.x, center.y - s * 0.15f), s * 0.08f, bg);
 }
 
-// Pill-тумблер
 bool RenderPillToggle(const char* label, bool* v, float width) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
@@ -80,7 +74,6 @@ bool RenderPillToggle(const char* label, bool* v, float width) {
     return pressed;
 }
 
-// Карточка
 void BeginCard(const char* title, float width, float height) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -204,14 +197,18 @@ static AntisocialGUIManager *sharedInstance = nil;
     io.DisplayFramebufferScale = ImVec2(scale, scale);
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     
-    // Загрузка шрифтов из памяти
-    // ⚠️ Если имена массивов другие - замени font_ttf, logo_ttf на свои из .hpp файлов
+    // === ЕДИНСТВЕННЫЙ блок загрузки шрифтов ===
+    ImFontConfig fontCfg;
+    fontCfg.FontDataOwnedByAtlas = false;
+    self.mainFont = io.Fonts->AddFontFromMemoryTTF(
+        (void*)font_medium,
+        sizeof(font_medium),
+        14.0f * scale,
+        &fontCfg,
+        io.Fonts->GetGlyphRangesCyrillic()
+    );
     
-    // Основной шрифт (Instrument Sans)
-       // Загрузка шрифтов из памяти
-    
-    // Основной шрифт (Instrument Sans) — массив в font.hpp называется font_medium!
-   ImFontConfig logoCfg;
+    ImFontConfig logoCfg;
     logoCfg.FontDataOwnedByAtlas = false;
     self.logoFont = io.Fonts->AddFontFromMemoryTTF(
         (void*)logo_ttf,
@@ -221,27 +218,14 @@ static AntisocialGUIManager *sharedInstance = nil;
     );
     
     io.FontGlobalScale = 1.0f / scale;
-    
-    // Шрифт логотипа
-    ImFontConfig logoCfg;
-    logoCfg.FontDataOwnedByAtlas = false;
-    self.logoFont = io.Fonts->AddFontFromMemoryTTF(
-        (void*)logo_ttf,  // ← замени на правильное имя из logo.hpp
-        sizeof(logo_ttf),  // ← и здесь
-        48.0f * scale,
-        &logoCfg
-    );
-    
-    // Компенсация retina
-    io.FontGlobalScale = 1.0f / scale;
+    // === конец блока загрузки шрифтов ===
     
     ImGui_ImplMetal_Init(self.device);
     
-    self.selectedSidebarTab = 3; // Movement
+    self.selectedSidebarTab = 3;
     self.selectedTopTab = 0;
     self.isReady = YES;
     
-    // Кнопка переключения
     CGFloat buttonSize = 50.0f;
     self.toggleButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.toggleButton.frame = CGRectMake(screenSize.width - 70, 40, buttonSize, buttonSize);
@@ -304,12 +288,10 @@ static AntisocialGUIManager *sharedInstance = nil;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos();
     
-    // Фон сайдбара
     draw->AddRectFilled(wp, ImVec2(wp.x + sidebarW, wp.y + H), IM_COL32(12, 12, 18, 255), 12.0f, ImDrawFlags_RoundCornersLeft);
     draw->AddLine(ImVec2(wp.x + sidebarW, wp.y), ImVec2(wp.x + sidebarW, wp.y + H), IM_COL32(255, 255, 255, 18), 1.0f);
     draw->AddLine(ImVec2(wp.x + sidebarW, wp.y + topbarH), ImVec2(wp.x + W, wp.y + topbarH), IM_COL32(255, 255, 255, 18), 1.0f);
     
-    // Логотип (шрифт или векторный fallback)
     if (self.logoFont) {
         ImGui::PushFont(self.logoFont);
         ImVec2 glyph_size = ImGui::CalcTextSize("A");
@@ -320,7 +302,6 @@ static AntisocialGUIManager *sharedInstance = nil;
         DrawLogoVector(draw, ImVec2(wp.x + sidebarW * 0.5f, wp.y + 42.0f), 28.0f);
     }
     
-    // Навигация сайдбара
     const char* sidebarItems[] = {"Visuals", "Combat", "World", "Movement", "Misc", "Configs", "Inventory"};
     ImGui::SetCursorPos(ImVec2(12, 82));
     ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
@@ -341,7 +322,6 @@ static AntisocialGUIManager *sharedInstance = nil;
     }
     ImGui::PopStyleVar(3);
     
-    // Верхние вкладки
     const char* topItems[] = {"General", "Advanced"};
     ImGui::SetCursorPos(ImVec2(sidebarW + 20, 12));
     for (int i = 0; i < 2; i++) {
@@ -357,7 +337,6 @@ static AntisocialGUIManager *sharedInstance = nil;
         ImGui::SameLine(0, 12);
     }
     
-    // Перетаскивание за таск-бар
     ImVec2 mousePos = ImGui::GetIO().MousePos;
     bool mouseInTitlebar = (mousePos.x >= sidebarW && mousePos.x <= W && mousePos.y >= 0 && mousePos.y <= topbarH);
     
@@ -373,12 +352,11 @@ static AntisocialGUIManager *sharedInstance = nil;
         self.isDragging = NO;
     }
     
-    // Контент
     float contentStartX = sidebarW + 20;
     float contentStartY = topbarH + 20;
     float colWidth = (W - sidebarW - 40) * 0.5f;
     
-    if (self.selectedSidebarTab == 0) { // Visuals
+    if (self.selectedSidebarTab == 0) {
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
         BeginCard("ESP", colWidth, 200.0f);
         RenderPillToggle("Box ESP", &g_esp_box, colWidth - 32.0f);
@@ -386,20 +364,20 @@ static AntisocialGUIManager *sharedInstance = nil;
         RenderPillToggle("Nickname", &g_esp_nickname, colWidth - 32.0f);
         EndCard();
     }
-    else if (self.selectedSidebarTab == 1) { // Combat
+    else if (self.selectedSidebarTab == 1) {
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
         BeginCard("Combat", colWidth, 200.0f);
         RenderPillToggle("Wallbang", &g_wallbang, colWidth - 32.0f);
         RenderPillToggle("NoRecoil", &g_norecoil, colWidth - 32.0f);
         EndCard();
     }
-    else if (self.selectedSidebarTab == 3) { // Movement
+    else if (self.selectedSidebarTab == 3) {
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
         BeginCard("Movement", colWidth, 120.0f);
         RenderPillToggle("BunnyHop", &g_bunnyhop, colWidth - 32.0f);
         EndCard();
     }
-    else if (self.selectedSidebarTab == 4) { // Misc
+    else if (self.selectedSidebarTab == 4) {
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
         BeginCard("Misc", colWidth, 120.0f);
         RenderPillToggle("Offscreen", &g_esp_box, colWidth - 32.0f);
