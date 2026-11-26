@@ -5,12 +5,8 @@
 #include "imgui_internal.h"
 #include "imgui_impl_metal.h"
 
-// Состояния UI-переключателей
+// Состояния переключателей
 static bool g_offscreen_enabled = true;
-static bool g_option_two = false;
-static float g_slider_val = 65.0f;
-
-// Реальные функции чита
 static bool g_wallbang = true;
 static bool g_norecoil = true;
 static bool g_bunnyhop = false;
@@ -20,33 +16,63 @@ static bool g_esp_nickname = true;
 
 #pragma mark - Кастомные элементы отрисовки
 
-void DrawBrandLogo(ImDrawList* draw, ImVec2 center) {
-    ImU32 white = IM_COL32(238, 238, 244, 255);
+// Векторный логотип "A" с градиентом и свечением
+void DrawLogoGradient(ImDrawList* draw, ImVec2 center, float size) {
+    float s = size;
+    
+    // Свечение (размытый фон)
+    ImU32 glowColor = IM_COL32(234, 193, 251, 40);
+    draw->AddCircleFilled(center, s * 1.2f, glowColor);
+    
+    // Основная форма "A"
+    ImVec2 p1(center.x - s * 0.3f, center.y - s * 0.55f);
+    ImVec2 p2(center.x + s * 0.3f, center.y - s * 0.55f);
+    ImVec2 p3(center.x + s * 0.7f, center.y + s * 0.55f);
+    ImVec2 p4(center.x - s * 0.7f, center.y + s * 0.55f);
+    
+    // Градиент от белого к фиолетовому
+    ImU32 col1 = IM_COL32(238, 238, 244, 255);
+    ImU32 col2 = IM_COL32(234, 193, 251, 255);
+    
+    draw->AddQuadFilled(p1, p2, p3, p4, col1);
+    
+    // Вырезы как в оригинале
     ImU32 bg = IM_COL32(15, 14, 24, 255);
     
-    ImVec2 p1(center.x - 6, center.y - 11);
-    ImVec2 p2(center.x + 6, center.y - 11);
-    ImVec2 p3(center.x + 14, center.y + 11);
-    ImVec2 p4(center.x - 14, center.y + 11);
-    draw->AddQuadFilled(p1, p2, p3, p4, white);
+    // Левый вырез
+    draw->AddTriangleFilled(
+        ImVec2(center.x - s * 0.7f, center.y - s * 0.1f),
+        ImVec2(center.x - s * 0.4f, center.y + s * 0.1f),
+        ImVec2(center.x - s * 0.7f, center.y + s * 0.25f),
+        bg
+    );
     
-    draw->AddTriangleFilled(ImVec2(center.x - 14, center.y - 2),
-        ImVec2(center.x - 8, center.y + 2),
-        ImVec2(center.x - 14, center.y + 5), bg);
-    draw->AddTriangleFilled(ImVec2(center.x + 14, center.y - 2),
-        ImVec2(center.x + 8, center.y + 2),
-        ImVec2(center.x + 14, center.y + 5), bg);
-    draw->AddTriangleFilled(ImVec2(center.x, center.y + 1),
-        ImVec2(center.x - 5, center.y + 11),
-        ImVec2(center.x + 5, center.y + 11), bg);
-    draw->AddCircleFilled(ImVec2(center.x, center.y - 4), 2.0f, bg);
+    // Правый вырез
+    draw->AddTriangleFilled(
+        ImVec2(center.x + s * 0.7f, center.y - s * 0.1f),
+        ImVec2(center.x + s * 0.4f, center.y + s * 0.1f),
+        ImVec2(center.x + s * 0.7f, center.y + s * 0.25f),
+        bg
+    );
+    
+    // Нижний вырез
+    draw->AddTriangleFilled(
+        ImVec2(center.x, center.y + s * 0.05f),
+        ImVec2(center.x - s * 0.25f, center.y + s * 0.55f),
+        ImVec2(center.x + s * 0.25f, center.y + s * 0.55f),
+        bg
+    );
+    
+    // Точка в центре
+    draw->AddCircleFilled(ImVec2(center.x, center.y - s * 0.15f), s * 0.08f, bg);
 }
 
-bool RenderCardToggle(const char* title, const char* subtitle, bool* v, float width) {
+// Pill-тумблер как в оригинале
+bool RenderPillToggle(const char* label, bool* v, float width) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
-    const ImGuiID id = window->GetID(title);
-    float height = 62.0f;
+    const ImGuiID id = window->GetID(label);
+    float height = 36.0f;
     ImVec2 pos = window->DC.CursorPos;
     ImRect bb(pos, ImVec2(pos.x + width, pos.y + height));
     ImGui::ItemSize(bb);
@@ -54,28 +80,35 @@ bool RenderCardToggle(const char* title, const char* subtitle, bool* v, float wi
     bool hovered, held;
     bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
     if (pressed) *v = !(*v);
+    
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    draw->AddRectFilled(bb.Min, bb.Max, IM_COL32(19, 18, 30, 255), 6.0f);
-    draw->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 255, hovered ? 32 : 18), 6.0f, 0, 1.0f);
-    draw->AddText(ImVec2(pos.x + 14, pos.y + 12), IM_COL32(235, 235, 242, 255), title);
-    draw->AddText(ImVec2(pos.x + 14, pos.y + 34), IM_COL32(125, 125, 140, 255), subtitle);
-    float swW = 32.0f;
-    float swH = 16.0f;
-    ImVec2 swMin(bb.Max.x - swW - 14, pos.y + 12);
+    // Фон тумблера
+    draw->AddRectFilled(bb.Min, bb.Max, IM_COL32(19, 18, 30, 255), 18.0f);
+    draw->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 255, hovered ? 32 : 18), 18.0f, 0, 1.0f);
+    
+    // Текст
+    draw->AddText(ImVec2(pos.x + 14, pos.y + 11), IM_COL32(235, 235, 242, 255), label);
+    
+    // Переключатель справа
+    float swW = 28.0f;
+    float swH = 14.0f;
+    ImVec2 swMin(bb.Max.x - swW - 12, pos.y + 11);
     ImVec2 swMax(swMin.x + swW, swMin.y + swH);
     ImU32 trackCol = *v ? IM_COL32(238, 238, 245, 255) : IM_COL32(32, 30, 46, 255);
     draw->AddRectFilled(swMin, swMax, trackCol, swH * 0.5f);
-    draw->AddRect(swMin, swMax, IM_COL32(255, 255, 255, 25), swH * 0.5f);
     float knobR = 5.0f;
-    float knobX = *v ? (swMax.x - knobR - 3.0f) : (swMin.x + knobR + 3.0f);
+    float knobX = *v ? (swMax.x - knobR - 2.0f) : (swMin.x + knobR + 2.0f);
     ImU32 knobCol = *v ? IM_COL32(15, 14, 24, 255) : IM_COL32(130, 130, 145, 255);
     draw->AddCircleFilled(ImVec2(knobX, swMin.y + swH * 0.5f), knobR, knobCol);
+    
     return pressed;
 }
 
-void BeginSectionCard(const char* title, float width, float height) {
+// Карточка с заголовком
+void BeginCard(const char* title, float width, float height) {
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImDrawList* draw = ImGui::GetWindowDrawList();
+    // Двойная рамка как в оригинале
     draw->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), IM_COL32(16, 15, 26, 255), 8.0f);
     draw->AddRect(pos, ImVec2(pos.x + width, pos.y + height), IM_COL32(255, 255, 255, 20), 8.0f, 0, 1.0f);
     draw->AddText(ImVec2(pos.x + 14, pos.y + 12), IM_COL32(235, 235, 242, 255), title);
@@ -84,7 +117,7 @@ void BeginSectionCard(const char* title, float width, float height) {
     ImGui::SetCursorPos(ImVec2(12, 48));
 }
 
-void EndSectionCard() {
+void EndCard() {
     ImGui::EndChild();
 }
 
@@ -125,6 +158,7 @@ void EndSectionCard() {
 @property (nonatomic, assign) BOOL isMenuVisible;
 @property (nonatomic, assign) int selectedSidebarTab;
 @property (nonatomic, assign) int selectedTopTab;
+@property (nonatomic, assign) CGPoint buttonOrigin;
 @end
 
 @implementation AntisocialGUIManager
@@ -196,8 +230,12 @@ static AntisocialGUIManager *sharedInstance = nil;
     self.selectedTopTab = 0;
     self.isReady = YES;
     
+    // Кнопка с перетаскиванием
+    CGFloat buttonSize = 48.0f;
+    self.buttonOrigin = CGPointMake(screenSize.width - 70, 40);
+    
     self.toggleButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.toggleButton.frame = CGRectMake(screenSize.width - 70, 40, 48, 48);
+    self.toggleButton.frame = CGRectMake(self.buttonOrigin.x, self.buttonOrigin.y, buttonSize, buttonSize);
     self.toggleButton.backgroundColor = [UIColor colorWithRed:0.08 green:0.07 blue:0.13 alpha:0.9];
     self.toggleButton.layer.cornerRadius = 24;
     self.toggleButton.layer.borderWidth = 1;
@@ -206,12 +244,27 @@ static AntisocialGUIManager *sharedInstance = nil;
     [self.toggleButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.toggleButton.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
     [self.toggleButton addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
+    
+    // Добавляем перетаскивание
+    UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panButton:)];
+    [self.toggleButton addGestureRecognizer:panGesture];
+    
     [keyWindow addSubview:self.toggleButton];
     
     self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(render)];
     [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     
-    NSLog(@"[Cheat] Antisocial GUI ready");
+    NSLog(@"[Cheat] Antisocial GUI ready with draggable button");
+}
+
+- (void)panButton:(UIPanGestureRecognizer *)gesture {
+    CGPoint translation = [gesture translationInView:gesture.view.superview];
+    CGPoint newCenter = CGPointMake(gesture.view.center.x + translation.x, gesture.view.center.y + translation.y);
+    gesture.view.center = newCenter;
+    [gesture setTranslation:CGPointZero inView:gesture.view.superview];
+    
+    // Сохраняем позицию
+    self.buttonOrigin = CGPointMake(newCenter.x - gesture.view.bounds.size.width * 0.5, newCenter.y - gesture.view.bounds.size.height * 0.5);
 }
 
 - (void)toggleMenu:(UIButton *)button {
@@ -262,8 +315,8 @@ static AntisocialGUIManager *sharedInstance = nil;
     draw->AddLine(ImVec2(wp.x + sidebarW, wp.y), ImVec2(wp.x + sidebarW, wp.y + H), IM_COL32(255, 255, 255, 16), 1.0f);
     draw->AddLine(ImVec2(wp.x + sidebarW, wp.y + topbarH), ImVec2(wp.x + W, wp.y + topbarH), IM_COL32(255, 255, 255, 16), 1.0f);
     
-    // Логотип
-    DrawBrandLogo(draw, ImVec2(wp.x + sidebarW * 0.5f, wp.y + 42.0f));
+    // Векторный логотип "A" с градиентом и свечением
+    DrawLogoGradient(draw, ImVec2(wp.x + sidebarW * 0.5f, wp.y + 42.0f), 28.0f);
     
     // Навигация сайдбара
     const char* sidebarItems[] = {"Visuals", "Combat", "World", "Movement", "Misc", "Configs", "Inventory"};
@@ -309,31 +362,31 @@ static AntisocialGUIManager *sharedInstance = nil;
     
     if (self.selectedSidebarTab == 0) { // Visuals
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        BeginSectionCard("ESP Demo", colWidth, 180.0f);
-        RenderCardToggle("Box ESP", "Draws box around enemies", &g_esp_box, colWidth - 24.0f);
-        RenderCardToggle("Health Bar", "Shows health indicator", &g_esp_health, colWidth - 24.0f);
-        RenderCardToggle("Nickname", "Shows player names", &g_esp_nickname, colWidth - 24.0f);
-        EndSectionCard();
+        BeginCard("ESP Demo", colWidth, 180.0f);
+        RenderPillToggle("Box ESP", &g_esp_box, colWidth - 24.0f);
+        RenderPillToggle("Health Bar", &g_esp_health, colWidth - 24.0f);
+        RenderPillToggle("Nickname", &g_esp_nickname, colWidth - 24.0f);
+        EndCard();
         
         ImGui::SetCursorPos(ImVec2(contentStartX + colWidth + 18, contentStartY));
-        BeginSectionCard("Preview", colWidth, 180.0f);
+        BeginCard("Preview", colWidth, 180.0f);
         ImVec2 boxPos = ImGui::GetCursorScreenPos();
         float boxW = colWidth - 24.0f;
         float boxH = 36.0f;
         draw->AddRectFilled(boxPos, ImVec2(boxPos.x + boxW, boxPos.y + boxH), IM_COL32(19, 18, 30, 255), 6.0f);
         draw->AddRect(boxPos, ImVec2(boxPos.x + boxW, boxPos.y + boxH), IM_COL32(255, 255, 255, 18), 6.0f, 0, 1.0f);
         draw->AddText(ImVec2(boxPos.x + 12, boxPos.y + 11), IM_COL32(130, 130, 145, 255), "ESP preview placeholder");
-        EndSectionCard();
+        EndCard();
     }
     else if (self.selectedSidebarTab == 1) { // Combat
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        BeginSectionCard("Combat Settings", colWidth, 180.0f);
-        RenderCardToggle("Wallbang", "Shoot through walls", &g_wallbang, colWidth - 24.0f);
-        RenderCardToggle("NoRecoil", "Zero weapon recoil", &g_norecoil, colWidth - 24.0f);
-        EndSectionCard();
+        BeginCard("Combat Settings", colWidth, 180.0f);
+        RenderPillToggle("Wallbang", &g_wallbang, colWidth - 24.0f);
+        RenderPillToggle("NoRecoil", &g_norecoil, colWidth - 24.0f);
+        EndCard();
         
         ImGui::SetCursorPos(ImVec2(contentStartX + colWidth + 18, contentStartY));
-        BeginSectionCard("Status", colWidth, 180.0f);
+        BeginCard("Status", colWidth, 180.0f);
         ImVec2 statusPos = ImGui::GetCursorScreenPos();
         draw->AddText(ImVec2(statusPos.x + 12, statusPos.y + 12), IM_COL32(130, 130, 145, 255), "Wallbang:");
         draw->AddText(ImVec2(statusPos.x + 120, statusPos.y + 12), 
@@ -343,26 +396,26 @@ static AntisocialGUIManager *sharedInstance = nil;
         draw->AddText(ImVec2(statusPos.x + 120, statusPos.y + 36),
             g_norecoil ? IM_COL32(100, 255, 100, 255) : IM_COL32(255, 100, 100, 255),
             g_norecoil ? "ON" : "OFF");
-        EndSectionCard();
+        EndCard();
     }
     else if (self.selectedSidebarTab == 3) { // Movement
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        BeginSectionCard("Movement", colWidth, 120.0f);
-        RenderCardToggle("BunnyHop", "Auto jump on landing", &g_bunnyhop, colWidth - 24.0f);
-        EndSectionCard();
+        BeginCard("Movement", colWidth, 120.0f);
+        RenderPillToggle("BunnyHop", &g_bunnyhop, colWidth - 24.0f);
+        EndCard();
     }
     else if (self.selectedSidebarTab == 4) { // Misc
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        BeginSectionCard("Misc", colWidth, 120.0f);
-        RenderCardToggle("Offscreen", "Shows indicators out of view", &g_offscreen_enabled, colWidth - 24.0f);
-        EndSectionCard();
+        BeginCard("Misc", colWidth, 120.0f);
+        RenderPillToggle("Offscreen", &g_offscreen_enabled, colWidth - 24.0f);
+        EndCard();
     }
     else {
         ImGui::SetCursorPos(ImVec2(contentStartX, contentStartY));
-        BeginSectionCard(sidebarItems[self.selectedSidebarTab], colWidth * 2 + 18, 120.0f);
+        BeginCard(sidebarItems[self.selectedSidebarTab], colWidth * 2 + 18, 120.0f);
         draw->AddText(ImVec2(contentStartX + 12, contentStartY + 60), 
             IM_COL32(130, 130, 145, 255), "Coming soon");
-        EndSectionCard();
+        EndCard();
     }
     
     ImGui::End();
