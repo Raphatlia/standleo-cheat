@@ -44,7 +44,7 @@ static ImVec4 anim_v(ImGuiID id, ImVec4 target, float dur = 0.15f) {
 
 static ImFont* logo_font = nullptr;
 
-// ===== internal_toggle — тёмный/светлый как в оригинале =====
+// ===== internal_toggle — тёмный/светлый =====
 static bool internal_toggle(const char* label, bool* v) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -62,7 +62,6 @@ static bool internal_toggle(const char* label, bool* v) {
     if (pressed) *v = !(*v);
     const ImRect check_bb(ImVec2(total_bb.Max.x - sq*2 + 10, total_bb.Min.y + 2), total_bb.Max - ImVec2(0,2));
     float main = anim_f(id, *v?1.f:0.f, 0.18f);
-    // ТЁМНЫЙ когда выключен, СВЕТЛЫЙ когда включён
     ImVec4 pill = anim_v(id+1, *v ? ImVec4(230/255.f,230/255.f,235/255.f,1) : ImVec4(55/255.f,55/255.f,66/255.f,1));
     ImVec4 text = anim_v(id+2, (*v||hovered) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImVec4 outl = anim_v(id+3, *v ? ImVec4(200/255.f,200/255.f,210/255.f,1) : ImVec4(55/255.f,55/255.f,66/255.f,1));
@@ -73,7 +72,6 @@ static bool internal_toggle(const char* label, bool* v) {
     int ve = d->VtxBuffer.Size;
     if (ve>vs) ImGui::ShadeVertsLinearColorGradientKeepAlpha(d,vs,ve,check_bb.Min,check_bb.Max,IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
     d->AddRect(check_bb.Min, check_bb.Max, ImGui::ColorConvertFloat4ToU32(outl), 666);
-    // Кружок ЧЁРНЫЙ когда включён, СЕРЫЙ когда выключен
     ImU32 knob_col = *v ? IM_COL32(20,20,25,255) : IM_COL32(130,130,140,255);
     d->AddCircleFilled(ImVec2(check_bb.Min.x + 8 + 14*main, check_bb.GetCenter().y), 5, knob_col, 200);
     ImGui::PushStyleColor(ImGuiCol_Text, text);
@@ -112,7 +110,7 @@ static void toggle(const char* label, bool* v, const char* desc = nullptr, std::
     ImGui::PopStyleVar();
 }
 
-// ===== slider_int — с закруглёнными концами =====
+// ===== slider_int — С ЗАКРУГЛЁННЫМИ КОНЦАМИ + DRAG =====
 static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -123,30 +121,36 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     const ImRect bb(pos, ImVec2(pos.x + width, pos.y + h));
     ImGui::ItemSize(bb);
     if (!ImGui::ItemAdd(bb, id)) return false;
+    
     bool hovered, held;
     bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
-    if (held || (pressed && ImGui::IsMouseClicked(0))) {
+    
+    // Drag + tap
+    if (held || pressed) {
         float ratio = ImClamp((ImGui::GetIO().MousePos.x - bb.Min.x) / width, 0.f, 1.f);
         int nv = vmin + (int)roundf(ratio * (vmax - vmin));
         if (nv != *v) { *v = nv; pressed = true; }
     }
+    
     ImDrawList* d = w->DrawList;
     char txt[64]; snprintf(txt, sizeof(txt), "%s >> %d", label, *v);
     d->AddText(pos, IM_COL32(235,235,242,255), txt);
     float trkY = pos.y + h - 8;
     ImVec2 trkMin(pos.x, trkY), trkMax(pos.x + width, trkY + 5);
     float halfH = (trkMax.y - trkMin.y) * 0.5f;
+    
     // Фон трека
     d->AddRectFilled(trkMin, trkMax, IM_COL32(40,40,55,255), 2.5f);
-    // Закругление в начале (белое)
+    // Закругление в начале
     d->AddCircleFilled(ImVec2(trkMin.x + halfH, trkMin.y + halfH), halfH, IM_COL32(255,255,255,255), 16);
-    // Заполненная часть — градиент белый→розовый
+    
+    // Градиент белый→розовый
     float ratio = (float)(*v - vmin) / (float)(vmax - vmin);
     ImVec2 fillMax(trkMin.x + (trkMax.x - trkMin.x) * ratio, trkMax.y);
     d->AddRectFilledMultiColor(trkMin, fillMax,
         IM_COL32(255,255,255,255), IM_COL32(234,193,251,255),
         IM_COL32(234,193,251,255), IM_COL32(255,255,255,255));
-    // Закругление в конце заполнения
+    // Закругление в конце
     if (ratio > 0.01f) {
         d->AddCircleFilled(ImVec2(fillMax.x - halfH, trkMin.y + halfH), halfH, IM_COL32(255,255,255,255), 16);
     }
@@ -192,7 +196,7 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     }
 }
 
-// ===== combo — ИСПРАВЛЕННЫЙ =====
+// ===== combo — ЧЕРЕЗ Selectable =====
 static bool combo(const char* label, int* value, std::vector<std::string> entries) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -214,7 +218,6 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     ImVec4 text = anim_v(id+10, (hovered||is_open)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImDrawList* d = w->DrawList;
     d->AddRect(drop.Min, drop.Max, ImColor(55,55,66,(int)(st.Alpha*255)), 8);
-    // НЕ рисуем label если он "##..."
     if (label[0] != '#' || label[1] != '#')
         d->AddText(ImVec2(drop.Min.x+8, drop.Min.y+6), ImGui::ColorConvertFloat4ToU32(text), label);
     d->AddText(ImVec2(drop.Min.x+8, drop.Min.y+6), ImGui::ColorConvertFloat4ToU32(text), entries[*value].c_str());
@@ -233,21 +236,10 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     if (ImGui::BeginPopup("##dd")) {
         ImGui::PopStyleColor(2); ImGui::PopStyleVar(3);
         for (int i=0;i<(int)entries.size();i++){
-            ImGuiID item_id = id + 100 + i;
             bool item_selected = (i == *value);
-            ImVec2 item_size(ImGui::GetContentRegionAvail().x, 26);
-            ImVec2 item_pos = ImGui::GetCursorPos();
-            if (ImGui::InvisibleButton(entries[i].c_str(), item_size)) {
+            if (ImGui::Selectable(entries[i].c_str(), item_selected)) {
                 *value = i; changed = true; ImGui::CloseCurrentPopup();
             }
-            bool item_hovered = ImGui::IsItemHovered();
-            ImVec4 item_text = anim_v(item_id, (item_selected||item_hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
-            ImDrawList* idl = ImGui::GetWindowDrawList();
-            ImVec2 iscreen = ImGui::GetItemRectMin();
-            ImVec2 isize = ImGui::GetItemRectSize();
-            if (item_hovered) idl->AddRectFilled(iscreen, iscreen+isize, ImColor(255,255,255,15), 4);
-            if (item_selected) idl->AddRect(iscreen, iscreen+isize, ImColor(234,193,251,180), 4);
-            idl->AddText(iscreen+ImVec2(8,5), ImGui::ColorConvertFloat4ToU32(item_text), entries[i].c_str());
         }
         if (!ImGui::IsWindowHovered() && ImGui::GetIO().MouseClicked[0]) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -298,7 +290,6 @@ static void end_category(){ ImGui::EndChild(); ImGui::PopStyleVar(); ImGui::EndC
 @property (nonatomic, assign) BOOL isReady, isMenuVisible, isDragging, wasVisible;
 @property (nonatomic, assign) int m_current, m_sub;
 @property (nonatomic, assign) CGPoint menuOffset, dragStartPos, iconOffset;
-@property (nonatomic, assign) BOOL iconDragging;
 @property (nonatomic, assign) float baseW, baseH;
 @end
 @implementation AntisocialGUIManager
@@ -318,14 +309,12 @@ static AntisocialGUIManager* sharedInst=nil;
     self.floatingIcon.layer.cornerRadius = size * 0.5f;
     self.floatingIcon.layer.borderWidth = 1.2f;
     self.floatingIcon.layer.borderColor = [UIColor colorWithRed:234/255.f green:193/255.f blue:251/255.f alpha:0.45].CGColor;
-    // Неоновое свечение
     self.floatingIcon.layer.shadowColor = [UIColor colorWithRed:180/255.f green:130/255.f blue:255/255.f alpha:1.0].CGColor;
     self.floatingIcon.layer.shadowOffset = CGSizeZero;
     self.floatingIcon.layer.shadowRadius = 10.0f;
     self.floatingIcon.layer.shadowOpacity = 0.85f;
     self.floatingIcon.layer.masksToBounds = NO;
     
-    // Векторный логотип "A" внутри
     CAShapeLayer *logoShape = [CAShapeLayer layer];
     UIBezierPath *path = [UIBezierPath bezierPath];
     [path moveToPoint:CGPointMake(24, 12)];
@@ -348,14 +337,10 @@ static AntisocialGUIManager* sharedInst=nil;
     logoShape.shadowOpacity = 0.7f;
     [self.floatingIcon.layer addSublayer:logoShape];
     
-    // Тап — открыть/закрыть меню
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleMenu)];
     [self.floatingIcon addGestureRecognizer:tap];
-    
-    // Drag — перетаскивание
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleIconPan:)];
     [self.floatingIcon addGestureRecognizer:pan];
-    
     [kw addSubview:self.floatingIcon];
 }
 
@@ -429,7 +414,7 @@ static AntisocialGUIManager* sharedInst=nil;
     static bool prev_menu_state = false;
     static float gui_alpha = 1.0f;
     if (self.isMenuVisible && !prev_menu_state) {
-        gui_alpha = 0.0f;  // сброс
+        gui_alpha = 0.0f;
     }
     prev_menu_state = self.isMenuVisible;
     gui_alpha += (1.0f - gui_alpha) * ImClamp(ImGui::GetIO().DeltaTime / 0.25f, 0.0f, 1.0f);
