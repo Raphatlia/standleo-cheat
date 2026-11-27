@@ -44,7 +44,7 @@ static ImVec4 anim_v(ImGuiID id, ImVec4 target, float dur = 0.15f) {
 
 static ImFont* logo_font = nullptr;
 
-// ===== internal_toggle — КАК В ОРИГИНАЛЕ (тёмный/светлый, не розовый) =====
+// ===== internal_toggle — тёмный/светлый как в оригинале =====
 static bool internal_toggle(const char* label, bool* v) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -62,7 +62,7 @@ static bool internal_toggle(const char* label, bool* v) {
     if (pressed) *v = !(*v);
     const ImRect check_bb(ImVec2(total_bb.Max.x - sq*2 + 10, total_bb.Min.y + 2), total_bb.Max - ImVec2(0,2));
     float main = anim_f(id, *v?1.f:0.f, 0.18f);
-    // КАК В ОРИГИНАЛЕ: выключен = тёмный, включен = светлый
+    // ТЁМНЫЙ когда выключен, СВЕТЛЫЙ когда включён
     ImVec4 pill = anim_v(id+1, *v ? ImVec4(230/255.f,230/255.f,235/255.f,1) : ImVec4(55/255.f,55/255.f,66/255.f,1));
     ImVec4 text = anim_v(id+2, (*v||hovered) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImVec4 outl = anim_v(id+3, *v ? ImVec4(200/255.f,200/255.f,210/255.f,1) : ImVec4(55/255.f,55/255.f,66/255.f,1));
@@ -73,7 +73,7 @@ static bool internal_toggle(const char* label, bool* v) {
     int ve = d->VtxBuffer.Size;
     if (ve>vs) ImGui::ShadeVertsLinearColorGradientKeepAlpha(d,vs,ve,check_bb.Min,check_bb.Max,IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
     d->AddRect(check_bb.Min, check_bb.Max, ImGui::ColorConvertFloat4ToU32(outl), 666);
-    // Кружок ЧЁРНЫЙ когда включен, серый когда выключен
+    // Кружок ЧЁРНЫЙ когда включён, СЕРЫЙ когда выключен
     ImU32 knob_col = *v ? IM_COL32(20,20,25,255) : IM_COL32(130,130,140,255);
     d->AddCircleFilled(ImVec2(check_bb.Min.x + 8 + 14*main, check_bb.GetCenter().y), 5, knob_col, 200);
     ImGui::PushStyleColor(ImGuiCol_Text, text);
@@ -112,7 +112,7 @@ static void toggle(const char* label, bool* v, const char* desc = nullptr, std::
     ImGui::PopStyleVar();
 }
 
-// ===== slider_int — БЕЗ КРУЖКА, градиент белый→розовый =====
+// ===== slider_int — с закруглёнными концами =====
 static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -135,12 +135,21 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     d->AddText(pos, IM_COL32(235,235,242,255), txt);
     float trkY = pos.y + h - 8;
     ImVec2 trkMin(pos.x, trkY), trkMax(pos.x + width, trkY + 5);
+    float halfH = (trkMax.y - trkMin.y) * 0.5f;
+    // Фон трека
     d->AddRectFilled(trkMin, trkMax, IM_COL32(40,40,55,255), 2.5f);
+    // Закругление в начале (белое)
+    d->AddCircleFilled(ImVec2(trkMin.x + halfH, trkMin.y + halfH), halfH, IM_COL32(255,255,255,255), 16);
+    // Заполненная часть — градиент белый→розовый
     float ratio = (float)(*v - vmin) / (float)(vmax - vmin);
     ImVec2 fillMax(trkMin.x + (trkMax.x - trkMin.x) * ratio, trkMax.y);
     d->AddRectFilledMultiColor(trkMin, fillMax,
         IM_COL32(255,255,255,255), IM_COL32(234,193,251,255),
         IM_COL32(234,193,251,255), IM_COL32(255,255,255,255));
+    // Закругление в конце заполнения
+    if (ratio > 0.01f) {
+        d->AddCircleFilled(ImVec2(fillMax.x - halfH, trkMin.y + halfH), halfH, IM_COL32(255,255,255,255), 16);
+    }
     return pressed;
 }
 
@@ -183,7 +192,7 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     }
 }
 
-// ===== combo =====
+// ===== combo — ИСПРАВЛЕННЫЙ =====
 static bool combo(const char* label, int* value, std::vector<std::string> entries) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -192,26 +201,32 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     const ImVec2 ls = ImGui::CalcTextSize(label);
     const ImVec2 pos = w->DC.CursorPos;
     const float width = ImGui::GetContentRegionAvail().x;
-    const ImRect drop(pos+ImVec2(0,ls.y+5), ImVec2(pos.x+width, pos.y+28+ls.y+5));
-    const ImRect total(pos, drop.Max);
-    ImGui::ItemSize(total,0);
-    if (!ImGui::ItemAdd(total,id,&total)) return false;
-    bool hovered,held; bool pressed = ImGui::ButtonBehavior(drop,id,&hovered,&held);
+    const float h = 28.0f;
+    const ImRect drop(pos, ImVec2(pos.x + width, pos.y + h));
+    ImGui::ItemSize(drop, st.FramePadding.y);
+    if (!ImGui::ItemAdd(drop, id, &drop)) return false;
+    
+    bool hovered, held;
+    bool pressed = ImGui::ButtonBehavior(drop, id, &hovered, &held);
     bool is_open = ImGui::IsPopupOpen("##dd");
     if (pressed) { if (is_open) ImGui::CloseCurrentPopup(); else ImGui::OpenPopup("##dd"); }
-    ImVec4 text = anim_v(id+10, (ImGui::IsItemActive()||hovered||is_open)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
+    
+    ImVec4 text = anim_v(id+10, (hovered||is_open)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImDrawList* d = w->DrawList;
     d->AddRect(drop.Min, drop.Max, ImColor(55,55,66,(int)(st.Alpha*255)), 8);
-    d->AddText(total.Min, ImGui::ColorConvertFloat4ToU32(text), label);
-    d->AddText(drop.Min+ImVec2(8,6), ImGui::ColorConvertFloat4ToU32(text), entries[*value].c_str());
+    // НЕ рисуем label если он "##..."
+    if (label[0] != '#' || label[1] != '#')
+        d->AddText(ImVec2(drop.Min.x+8, drop.Min.y+6), ImGui::ColorConvertFloat4ToU32(text), label);
+    d->AddText(ImVec2(drop.Min.x+8, drop.Min.y+6), ImGui::ColorConvertFloat4ToU32(text), entries[*value].c_str());
     ImVec2 ar(drop.Max.x-14, drop.Min.y+10);
     d->AddTriangleFilled(ar, ImVec2(ar.x+8,ar.y), ImVec2(ar.x+4,ar.y+6), ImGui::ColorConvertFloat4ToU32(text));
+    
     if (!is_open) return false;
-    ImGui::SetNextWindowPos(ImVec2(drop.Min.x, drop.Max.y+5));
-    ImGui::SetNextWindowSize(ImVec2(drop.GetWidth(),0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,8);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(8,8));
+    ImGui::SetNextWindowPos(ImVec2(drop.Min.x, drop.Max.y+4));
+    ImGui::SetNextWindowSize(ImVec2(drop.GetWidth(), 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6,6));
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(16/255.f,16/255.f,28/255.f,1));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(41/255.f,43/255.f,55/255.f,1));
     bool changed = false;
@@ -219,17 +234,20 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
         ImGui::PopStyleColor(2); ImGui::PopStyleVar(3);
         for (int i=0;i<(int)entries.size();i++){
             ImGuiID item_id = id + 100 + i;
-            ImVec2 item_size(ImGui::GetContentRegionAvail().x, 24);
-            bool item_hovered = ImGui::IsMouseHoveringRect(ImGui::GetCursorScreenPos(), ImGui::GetCursorScreenPos()+item_size);
+            bool item_selected = (i == *value);
+            ImVec2 item_size(ImGui::GetContentRegionAvail().x, 26);
+            ImVec2 item_pos = ImGui::GetCursorPos();
             if (ImGui::InvisibleButton(entries[i].c_str(), item_size)) {
                 *value = i; changed = true; ImGui::CloseCurrentPopup();
             }
-            ImVec4 item_text = anim_v(item_id, (i==*value||item_hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
-            ImDrawList* item_d = ImGui::GetWindowDrawList();
-            ImVec2 item_screen = ImGui::GetCursorScreenPos() - item_size;
-            if (item_hovered) item_d->AddRectFilled(item_screen, item_screen+item_size, ImColor(255,255,255,15), 4);
-            if (i==*value) item_d->AddRect(item_screen, item_screen+item_size, ImColor(234,193,251,180), 4);
-            item_d->AddText(item_screen+ImVec2(8,6), ImGui::ColorConvertFloat4ToU32(item_text), entries[i].c_str());
+            bool item_hovered = ImGui::IsItemHovered();
+            ImVec4 item_text = anim_v(item_id, (item_selected||item_hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
+            ImDrawList* idl = ImGui::GetWindowDrawList();
+            ImVec2 iscreen = ImGui::GetItemRectMin();
+            ImVec2 isize = ImGui::GetItemRectSize();
+            if (item_hovered) idl->AddRectFilled(iscreen, iscreen+isize, ImColor(255,255,255,15), 4);
+            if (item_selected) idl->AddRect(iscreen, iscreen+isize, ImColor(234,193,251,180), 4);
+            idl->AddText(iscreen+ImVec2(8,5), ImGui::ColorConvertFloat4ToU32(item_text), entries[i].c_str());
         }
         if (!ImGui::IsWindowHovered() && ImGui::GetIO().MouseClicked[0]) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -407,7 +425,16 @@ static AntisocialGUIManager* sharedInst=nil;
     const float W=self.baseW, H=self.baseH;
     const float left=W*0.23f, top=40;
     
-    float gui_alpha = anim_f(ImGui::GetID("gui_alpha"), 1.0f, 0.25f);
+    // Fade при каждом открытии
+    static bool prev_menu_state = false;
+    static float gui_alpha = 1.0f;
+    if (self.isMenuVisible && !prev_menu_state) {
+        gui_alpha = 0.0f;  // сброс
+    }
+    prev_menu_state = self.isMenuVisible;
+    gui_alpha += (1.0f - gui_alpha) * ImClamp(ImGui::GetIO().DeltaTime / 0.25f, 0.0f, 1.0f);
+    if (gui_alpha > 0.999f) gui_alpha = 1.0f;
+    
     static int prev_tab = -1;
     if (prev_tab != self.m_current) { prev_tab = self.m_current; }
     float tab_alpha = anim_f(ImGui::GetID("tab_alpha"), 1.0f, 0.20f);
