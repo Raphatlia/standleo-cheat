@@ -25,21 +25,23 @@ static int  g_slider = 0;
 static int  g_slider2 = 0;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 
+// Экранные координаты пальца (для плавного drag без дрожания)
+static CGPoint g_touchScreenPos = CGPointZero;
+
 #pragma mark - ===== HOOKS / MEMORY =====
 namespace hooks {
     static uintptr_t g_base  = 0;
     static bool      g_ready = false;
 
-    // ==== ОФСЕТЫ: ОБНОВИ ИЗ dump.cs ПОД ТЕКУЩУЮ ВЕРСИЮ ИГРЫ ====
     namespace off {
-        constexpr uintptr_t local_player_ptr = 0x0;   // TODO: RVA статик-поля с локальным игроком
-        constexpr uintptr_t ent_movement     = 0xA8;  // entity -> movement_controller
-        constexpr uintptr_t mov_translation  = 0x70;  // movement -> translation params
-        constexpr uintptr_t trans_jump       = 0x50;  // translation -> jump params
-        constexpr uintptr_t trans_field      = 0x28;  // translation + 0x28 (float)
-        constexpr uintptr_t jump_impulse     = 0xA8;  // jump params + 0xA8 (obscured float)
-        constexpr uintptr_t ent_weapon       = 0x0;   // TODO: entity -> weapon_controller
-        constexpr uintptr_t gun_recoil_mult  = 0x0;   // TODO: CGunController::m_fRecoilMult
+        constexpr uintptr_t local_player_ptr = 0x0;
+        constexpr uintptr_t ent_movement     = 0xA8;
+        constexpr uintptr_t mov_translation  = 0x70;
+        constexpr uintptr_t trans_jump       = 0x50;
+        constexpr uintptr_t trans_field      = 0x28;
+        constexpr uintptr_t jump_impulse     = 0xA8;
+        constexpr uintptr_t ent_weapon       = 0x0;
+        constexpr uintptr_t gun_recoil_mult  = 0x0;
     }
 
     static uintptr_t find_base() {
@@ -54,7 +56,6 @@ namespace hooks {
     template<typename T> static T sread(uintptr_t a) { return valid(a) ? *(T*)a : T(0); }
     template<typename T> static bool swrite(uintptr_t a, T v) { if (!valid(a)) return false; *(T*)a = v; return true; }
 
-    // obscured float: [key][value ^ key]
     static void write_obscured_float(uintptr_t loc, float value) {
         if (!valid(loc)) return;
         int key = *(int*)loc;
@@ -78,10 +79,7 @@ namespace hooks {
     }
 
     static void norecoil() {
-        // TODO после dump.cs:
-        // uintptr_t ent = local_player(); if (!ent) return;
-        // uintptr_t wpn = sread<uintptr_t>(ent + off::ent_weapon); if (!wpn) return;
-        // swrite<float>(wpn + off::gun_recoil_mult, 0.f);
+        // TODO после dump.cs
     }
 
     static void update() {
@@ -177,7 +175,7 @@ static void toggle(const char* label, bool* v, const char* desc, std::function<v
     ImGui::PopStyleVar();
 }
 
-// ===== slider_int — ТОНКИЙ, БЕЗ КРУЖКА, драг по всей полосе =====
+// ===== slider_int =====
 static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -226,7 +224,7 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     return changed;
 }
 
-// ===== colorpicker — каждый квадрат = свой popup и свой цвет =====
+// ===== colorpicker =====
 static void color(const char* label, std::vector<ImVec4*> colors) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return;
@@ -305,15 +303,25 @@ static void internal_scroll(const char* label){
 @end
 @implementation UIOverlayHostView
 + (Class)layerClass { return [CAMetalLayer class]; }
-- (void)touchesBegan:(NSSet<UITouch*>*)t withEvent:(UIEvent*)e { CGPoint p=[[t anyObject] locationInView:self]; ImGui::GetIO().MousePos=ImVec2(p.x,p.y); ImGui::GetIO().MouseDown[0]=true; }
-- (void)touchesMoved:(NSSet<UITouch*>*)t withEvent:(UIEvent*)e { CGPoint p=[[t anyObject] locationInView:self]; ImGui::GetIO().MousePos=ImVec2(p.x,p.y); }
+- (void)touchesBegan:(NSSet<UITouch*>*)t withEvent:(UIEvent*)e {
+    UITouch* touch=[t anyObject];
+    g_touchScreenPos=[touch locationInView:nil];
+    CGPoint p=[touch locationInView:self];
+    ImGui::GetIO().MousePos=ImVec2(p.x,p.y); ImGui::GetIO().MouseDown[0]=true;
+}
+- (void)touchesMoved:(NSSet<UITouch*>*)t withEvent:(UIEvent*)e {
+    UITouch* touch=[t anyObject];
+    g_touchScreenPos=[touch locationInView:nil];
+    CGPoint p=[touch locationInView:self];
+    ImGui::GetIO().MousePos=ImVec2(p.x,p.y);
+}
 - (void)touchesEnded:(NSSet<UITouch*>*)t withEvent:(UIEvent*)e { ImGui::GetIO().MouseDown[0]=false; }
 - (void)touchesCancelled:(NSSet<UITouch*>*)t withEvent:(UIEvent*)e { ImGui::GetIO().MouseDown[0]=false; }
 @end
 
 #pragma mark - Manager
 @interface AntisocialGUIManager : NSObject
-@property (nonatomic, strong) UIButton *toggleButton;
+@property (nonatomic, strong) UIView *floatingIcon;
 @property (nonatomic, strong) UIOverlayHostView *hostView;
 @property (nonatomic, strong) CAMetalLayer *metalLayer;
 @property (nonatomic, strong) id<MTLDevice> device;
@@ -329,6 +337,74 @@ static AntisocialGUIManager* sharedInst=nil;
 + (AntisocialGUIManager*)shared { if(!sharedInst) sharedInst=[[self alloc] init]; return sharedInst; }
 + (void)load { for(int i=1;i<=15;i++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [[AntisocialGUIManager shared] trySetup]; }); }
 - (UIWindow*)findKeyWindow { for(UIScene* s in UIApplication.sharedApplication.connectedScenes){ if(![s isKindOfClass:[UIWindowScene class]])continue; for(UIWindow* w in ((UIWindowScene*)s).windows) if(w.isKeyWindow) return w;} return nil; }
+
+// ===== Плавающая кнопка с градиентным логотипом "A" =====
+- (void)setupFloatingIcon:(UIWindow*)kw {
+    CGSize sc = kw.bounds.size;
+    CGFloat size = 48.0f;
+    CGFloat ix = sc.width - 70, iy = 42;
+
+    self.floatingIcon = [[UIView alloc] initWithFrame:CGRectMake(ix, iy, size, size)];
+    self.floatingIcon.backgroundColor = [UIColor colorWithRed:16/255.f green:16/255.f blue:28/255.f alpha:0.95];
+    self.floatingIcon.layer.cornerRadius = size * 0.5f;
+    self.floatingIcon.layer.borderWidth = 1.2f;
+    self.floatingIcon.layer.borderColor = [UIColor colorWithRed:234/255.f green:193/255.f blue:251/255.f alpha:0.45].CGColor;
+    self.floatingIcon.layer.shadowColor = [UIColor colorWithRed:180/255.f green:130/255.f blue:255/255.f alpha:1.0].CGColor;
+    self.floatingIcon.layer.shadowOffset = CGSizeZero;
+    self.floatingIcon.layer.shadowRadius = 10.0f;
+    self.floatingIcon.layer.shadowOpacity = 0.85f;
+    self.floatingIcon.layer.masksToBounds = NO;
+
+    // Векторный путь буквы "A"
+    CAShapeLayer *logoShape = [CAShapeLayer layer];
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    [path moveToPoint:CGPointMake(24, 12)];
+    [path addLineToPoint:CGPointMake(14, 33)];
+    [path addLineToPoint:CGPointMake(18.5, 33)];
+    [path addLineToPoint:CGPointMake(24, 20.5)];
+    [path addLineToPoint:CGPointMake(29.5, 33)];
+    [path addLineToPoint:CGPointMake(34, 33)];
+    [path closePath];
+    [path moveToPoint:CGPointMake(19, 26.5)];
+    [path addLineToPoint:CGPointMake(29, 26.5)];
+    [path addLineToPoint:CGPointMake(29, 29.5)];
+    [path addLineToPoint:CGPointMake(19, 29.5)];
+    [path closePath];
+    logoShape.path = path.CGPath;
+    logoShape.fillColor = [UIColor whiteColor].CGColor;
+    logoShape.frame = CGRectMake(0,0,size,size);
+
+    // Градиент белый->розовый, замаскированный буквой "A"
+    CAGradientLayer *grad = [CAGradientLayer layer];
+    grad.frame = CGRectMake(0,0,size,size);
+    grad.colors = @[
+        (id)[UIColor colorWithRed:238/255.f green:238/255.f blue:244/255.f alpha:1.0].CGColor,
+        (id)[UIColor colorWithRed:234/255.f green:193/255.f blue:251/255.f alpha:1.0].CGColor
+    ];
+    grad.startPoint = CGPointMake(0,0);
+    grad.endPoint = CGPointMake(1,1);
+    grad.mask = logoShape;
+    [self.floatingIcon.layer addSublayer:grad];
+
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleMenu)];
+    [self.floatingIcon addGestureRecognizer:tap];
+
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleIconPan:)];
+    [self.floatingIcon addGestureRecognizer:pan];
+
+    [kw addSubview:self.floatingIcon];
+}
+
+- (void)handleIconPan:(UIPanGestureRecognizer*)pan {
+    CGPoint translation = [pan translationInView:pan.view.superview];
+    CGPoint newCenter = CGPointMake(pan.view.center.x + translation.x, pan.view.center.y + translation.y);
+    CGSize sc = [UIScreen mainScreen].bounds.size;
+    newCenter.x = MAX(24, MIN(sc.width-24, newCenter.x));
+    newCenter.y = MAX(24, MIN(sc.height-24, newCenter.y));
+    pan.view.center = newCenter;
+    [pan setTranslation:CGPointZero inView:pan.view.superview];
+}
+
 - (void)trySetup {
     if(self.hostView) return; UIWindow* kw=[self findKeyWindow]; if(!kw) return;
     CGFloat scale=[UIScreen mainScreen].scale; CGSize sc=kw.bounds.size;
@@ -359,20 +435,16 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGui::GetStyle().Colors[ImGuiCol_TextSelectedBg]=ImVec4(0,0,0,0);
     ImGui_ImplMetal_Init(self.device);
     self.m_current=0; self.m_sub=0; self.isReady=YES;
-    CGFloat bs=44; self.toggleButton=[UIButton buttonWithType:UIButtonTypeSystem];
-    self.toggleButton.frame=CGRectMake(sc.width-60,40,bs,bs);
-    self.toggleButton.backgroundColor=[UIColor colorWithRed:0.15 green:0.12 blue:0.25 alpha:0.9];
-    self.toggleButton.layer.cornerRadius=22; self.toggleButton.layer.borderWidth=1;
-    self.toggleButton.layer.borderColor=[UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
-    [self.toggleButton setTitle:@"S" forState:UIControlStateNormal];
-    [self.toggleButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.toggleButton.titleLabel.font=[UIFont systemFontOfSize:20 weight:UIFontWeightBold];
-    [self.toggleButton addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
-    [kw addSubview:self.toggleButton];
+    [self setupFloatingIcon:kw];
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(render)];
     [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
 }
-- (void)toggleMenu:(UIButton*)b { self.isMenuVisible=!self.isMenuVisible; self.hostView.hidden=!self.isMenuVisible; self.hostView.userInteractionEnabled=self.isMenuVisible; if(!self.isMenuVisible){ImGui::GetIO().MouseDown[0]=false;ImGui::GetIO().MousePos=ImVec2(-FLT_MAX,-FLT_MAX);} }
+- (void)toggleMenu {
+    self.isMenuVisible=!self.isMenuVisible;
+    self.hostView.hidden=!self.isMenuVisible;
+    self.hostView.userInteractionEnabled=self.isMenuVisible;
+    if(!self.isMenuVisible){ImGui::GetIO().MouseDown[0]=false;ImGui::GetIO().MousePos=ImVec2(-FLT_MAX,-FLT_MAX);}
+}
 
 - (void)render {
     if(!self.isReady||!self.isMenuVisible) return;
@@ -382,7 +454,7 @@ static AntisocialGUIManager* sharedInst=nil;
     rp.colorAttachments[0].storeAction=MTLStoreActionStore; rp.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);
     ImGui_ImplMetal_NewFrame(rp); ImGui::NewFrame();
 
-    hooks::update();   // ← хуки крутятся каждый кадр
+    hooks::update();
 
     static float child_alpha=0.f;
     const float W=620,H=370,left=140,top=40;
@@ -433,7 +505,6 @@ static AntisocialGUIManager* sharedInst=nil;
                 float pd=tr.GetHeight()/2-tsz.y/2;
                 dl->AddText(tr.Min+ImVec2(pd*2,pd),ImGui::ColorConvertFloat4ToU32(txt),tabs[it]);
             }
-            // профиль ВНУТРИ сайдбара
             ImRect child_wr=ImGui::GetCurrentWindow()->Rect();
             ImRect pr=ImRect(ImVec2(child_wr.Min.x+11,child_wr.Max.y-10-38), child_wr.Max-ImVec2(10,10));
             dl->AddRectFilled(pr.Min,pr.Max,ImColor(255,255,255,7),8);
@@ -464,12 +535,9 @@ static AntisocialGUIManager* sharedInst=nil;
             ImGui::EndChild();
         }
 
-        // разделители
-        int s1=dl->VtxBuffer.Size;
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55),1);
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55),1);
-        int s2=dl->VtxBuffer.Size;
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,s1,s2,wr.Min,wr.Max,IM_COL32(41,43,55,255),IM_COL32(21,23,35,255));
+        // ===== ТОНКИЕ разделители БЕЗ градиента (границы убраны) =====
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55,60),1);
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55,60),1);
 
         child_alpha=anim_f(ImGui::GetID("##ca"),1.f,0.15f);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,child_alpha);
@@ -511,7 +579,6 @@ static AntisocialGUIManager* sharedInst=nil;
                 internal_toggle("NoRecoil",&g_norecoil_status);
                 end_category();
             } else if(self.m_current==2){
-                // карточка Combo ВОЗВРАЩЕНА, но БЕЗ дропдауна
                 begin_category("Combo"); slider_int("Test slider",&g_slider2,0,100); end_category();
             } else if(self.m_current==3){
                 begin_category("Movement"); internal_toggle("Auto Strafe",&g_auto_strafe); end_category();
@@ -526,16 +593,21 @@ static AntisocialGUIManager* sharedInst=nil;
         ImGui::PopStyleVar();
         ImGui::PopStyleVar();
 
-        // drag с clamp
+        // ===== ПЛАВНЫЙ drag окна (по экранным координатам, без дрожания) =====
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
-        if(inBar&&ImGui::IsMouseClicked(0)){self.isDragging=YES;self.dragStartPos=CGPointMake(mp.x-self.menuOffset.x,mp.y-self.menuOffset.y);}
+        if(inBar&&ImGui::IsMouseClicked(0)){
+            self.isDragging=YES;
+            self.dragStartPos=CGPointMake(g_touchScreenPos.x-self.menuOffset.x, g_touchScreenPos.y-self.menuOffset.y);
+        }
         if(self.isDragging&&ImGui::IsMouseDown(0)){
-            CGPoint no=CGPointMake(mp.x-self.dragStartPos.x,mp.y-self.dragStartPos.y);
-            no.x=MAX(0,MIN(no.x,self.screenWidth-W));
-            no.y=MAX(0,MIN(no.y,self.screenHeight-H));
-            self.menuOffset=no;
-            self.hostView.frame=CGRectMake(no.x,no.y,W,H);
+            CGPoint target=CGPointMake(g_touchScreenPos.x-self.dragStartPos.x, g_touchScreenPos.y-self.dragStartPos.y);
+            target.x=MAX(0,MIN(target.x,self.screenWidth-W));
+            target.y=MAX(0,MIN(target.y,self.screenHeight-H));
+            // интерполяция к цели
+            self.menuOffset=CGPointMake(self.menuOffset.x+(target.x-self.menuOffset.x)*0.25,
+                                        self.menuOffset.y+(target.y-self.menuOffset.y)*0.25);
+            self.hostView.frame=CGRectMake(self.menuOffset.x,self.menuOffset.y,W,H);
         } else if(!ImGui::IsMouseDown(0)) self.isDragging=NO;
 
         ImGui::End();
