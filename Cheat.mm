@@ -15,7 +15,7 @@
 #include <mach-o/dyld.h>
 #include <cstring>
 
-// ===== Состояния (готово к хукам) =====
+// ===== Состояния =====
 static bool g_wallbang = true, g_norecoil = true, g_bunnyhop = false;
 static bool g_esp_box = true, g_esp_health = true, g_esp_nickname = true;
 static bool g_offscreen = false, g_internal = false;
@@ -25,14 +25,12 @@ static int  g_slider = 0;
 static int  g_slider2 = 0;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 
-// Экранные координаты пальца (для плавного drag без дрожания)
 static CGPoint g_touchScreenPos = CGPointZero;
 
 #pragma mark - ===== HOOKS / MEMORY =====
 namespace hooks {
     static uintptr_t g_base  = 0;
     static bool      g_ready = false;
-
     namespace off {
         constexpr uintptr_t local_player_ptr = 0x0;
         constexpr uintptr_t ent_movement     = 0xA8;
@@ -43,7 +41,6 @@ namespace hooks {
         constexpr uintptr_t ent_weapon       = 0x0;
         constexpr uintptr_t gun_recoil_mult  = 0x0;
     }
-
     static uintptr_t find_base() {
         for (uint32_t i = 0; i < _dyld_image_count(); i++) {
             const char* n = _dyld_get_image_name(i);
@@ -55,20 +52,17 @@ namespace hooks {
     static bool valid(uintptr_t p) { return p > 0x100000000ull && p < 0x7fffffffffull; }
     template<typename T> static T sread(uintptr_t a) { return valid(a) ? *(T*)a : T(0); }
     template<typename T> static bool swrite(uintptr_t a, T v) { if (!valid(a)) return false; *(T*)a = v; return true; }
-
     static void write_obscured_float(uintptr_t loc, float value) {
         if (!valid(loc)) return;
         int key = *(int*)loc;
         union { int i; float f; } u; u.f = value;
-        swrite<float>(loc + 0x4, (float)(u.i ^ key));
+        swrite<float>(loc + 0.4, (float)(u.i ^ key));
     }
-
     static void init() { if (g_ready) return; g_base = find_base(); g_ready = (g_base != 0); }
     static uintptr_t local_player() {
         if (!g_ready || !off::local_player_ptr) return 0;
         return sread<uintptr_t>(g_base + off::local_player_ptr);
     }
-
     static void bunnyhop() {
         uintptr_t ent = local_player(); if (!ent) return;
         uintptr_t mov = sread<uintptr_t>(ent + off::ent_movement);    if (!mov) return;
@@ -77,11 +71,7 @@ namespace hooks {
         swrite<float>(tr + off::trans_field, 999.f);
         write_obscured_float(jp + off::jump_impulse, 7.9f);
     }
-
-    static void norecoil() {
-        // TODO после dump.cs
-    }
-
+    static void norecoil() {}
     static void update() {
         init();
         if (!g_ready) return;
@@ -184,7 +174,6 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     const float width = ImGui::GetContentRegionAvail().x;
     const ImVec2 ls = ImGui::CalcTextSize(label, NULL, true);
     const ImVec2 pos = w->DC.CursorPos;
-
     const float track_h = 5.0f;
     const float gap     = 6.0f;
     const ImRect label_bb(pos, ImVec2(pos.x + width, pos.y + ls.y));
@@ -193,7 +182,6 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     const ImRect total_bb(pos, track_bb.Max);
     ImGui::ItemSize(total_bb, st.FramePadding.y);
     if (!ImGui::ItemAdd(total_bb, id)) return false;
-
     bool hovered, held;
     bool pressed = ImGui::ButtonBehavior(hit_bb, id, &hovered, &held);
     bool changed = false;
@@ -202,7 +190,6 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
         int nv = vmin + (int)roundf(ratio * (vmax - vmin));
         if (nv != *v) { *v = nv; changed = true; }
     }
-
     ImDrawList* d = w->DrawList;
     ImVec4 text = anim_v(id+6, (held||hovered||changed) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
     char vb[64]; snprintf(vb, sizeof(vb), "%d", *v);
@@ -210,7 +197,6 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     d->AddText(label_bb.Min, ImGui::ColorConvertFloat4ToU32(text), label);
     d->AddText(ImVec2(label_bb.Min.x + ls.x + 5, label_bb.Min.y), ImColor(65,65,65), ">>");
     d->AddText(ImVec2(label_bb.Min.x + ls.x + 5 + sep.x + 5, label_bb.Min.y), ImColor(155,155,155), vb);
-
     const float r = track_h * 0.5f;
     d->AddRectFilled(track_bb.Min, track_bb.Max, ImColor(55,55,66,(int)(st.Alpha*255)), r);
     float ratio = (float)(*v - vmin) / (float)(vmax - vmin);
@@ -322,6 +308,7 @@ static void internal_scroll(const char* label){
 #pragma mark - Manager
 @interface AntisocialGUIManager : NSObject
 @property (nonatomic, strong) UIView *floatingIcon;
+@property (nonatomic, strong) CAGradientLayer *iconGrad;
 @property (nonatomic, strong) UIOverlayHostView *hostView;
 @property (nonatomic, strong) CAMetalLayer *metalLayer;
 @property (nonatomic, strong) id<MTLDevice> device;
@@ -338,43 +325,45 @@ static AntisocialGUIManager* sharedInst=nil;
 + (void)load { for(int i=1;i<=15;i++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [[AntisocialGUIManager shared] trySetup]; }); }
 - (UIWindow*)findKeyWindow { for(UIScene* s in UIApplication.sharedApplication.connectedScenes){ if(![s isKindOfClass:[UIWindowScene class]])continue; for(UIWindow* w in ((UIWindowScene*)s).windows) if(w.isKeyWindow) return w;} return nil; }
 
-// ===== Плавающая кнопка с градиентным логотипом "A" =====
+// ===== Кнопка: лого "A" + НЕОНОВОЕ пульсирующее свечение =====
 - (void)setupFloatingIcon:(UIWindow*)kw {
     CGSize sc = kw.bounds.size;
-    CGFloat size = 48.0f;
-    CGFloat ix = sc.width - 70, iy = 42;
+    CGFloat size = 50.0f;
+    CGFloat ix = sc.width - 72, iy = 42;
 
     self.floatingIcon = [[UIView alloc] initWithFrame:CGRectMake(ix, iy, size, size)];
-    self.floatingIcon.backgroundColor = [UIColor colorWithRed:16/255.f green:16/255.f blue:28/255.f alpha:0.95];
+    self.floatingIcon.backgroundColor = [UIColor colorWithRed:10/255.f green:10/255.f blue:18/255.f alpha:0.95];
     self.floatingIcon.layer.cornerRadius = size * 0.5f;
-    self.floatingIcon.layer.borderWidth = 1.2f;
-    self.floatingIcon.layer.borderColor = [UIColor colorWithRed:234/255.f green:193/255.f blue:251/255.f alpha:0.45].CGColor;
-    self.floatingIcon.layer.shadowColor = [UIColor colorWithRed:180/255.f green:130/255.f blue:255/255.f alpha:1.0].CGColor;
-    self.floatingIcon.layer.shadowOffset = CGSizeZero;
-    self.floatingIcon.layer.shadowRadius = 10.0f;
-    self.floatingIcon.layer.shadowOpacity = 0.85f;
+    self.floatingIcon.layer.borderWidth = 1.0f;
+    self.floatingIcon.layer.borderColor = [UIColor colorWithRed:120/255.f green:200/255.f blue:255/255.f alpha:0.5].CGColor;
     self.floatingIcon.layer.masksToBounds = NO;
 
-    // Векторный путь буквы "A"
+    // неоновое свечение (базовые параметры)
+    self.floatingIcon.layer.shadowColor = [UIColor colorWithRed:120/255.f green:180/255.f blue:255/255.f alpha:1.0].CGColor;
+    self.floatingIcon.layer.shadowOffset = CGSizeZero;
+    self.floatingIcon.layer.shadowRadius = 12.0f;
+    self.floatingIcon.layer.shadowOpacity = 0.9f;
+
+    // векторный путь буквы "A" (как в GUI)
     CAShapeLayer *logoShape = [CAShapeLayer layer];
     UIBezierPath *path = [UIBezierPath bezierPath];
-    [path moveToPoint:CGPointMake(24, 12)];
-    [path addLineToPoint:CGPointMake(14, 33)];
-    [path addLineToPoint:CGPointMake(18.5, 33)];
-    [path addLineToPoint:CGPointMake(24, 20.5)];
-    [path addLineToPoint:CGPointMake(29.5, 33)];
-    [path addLineToPoint:CGPointMake(34, 33)];
+    [path moveToPoint:CGPointMake(25, 13)];
+    [path addLineToPoint:CGPointMake(14, 36)];
+    [path addLineToPoint:CGPointMake(19, 36)];
+    [path addLineToPoint:CGPointMake(25, 22)];
+    [path addLineToPoint:CGPointMake(31, 36)];
+    [path addLineToPoint:CGPointMake(36, 36)];
     [path closePath];
-    [path moveToPoint:CGPointMake(19, 26.5)];
-    [path addLineToPoint:CGPointMake(29, 26.5)];
-    [path addLineToPoint:CGPointMake(29, 29.5)];
-    [path addLineToPoint:CGPointMake(19, 29.5)];
+    [path moveToPoint:CGPointMake(20, 29)];
+    [path addLineToPoint:CGPointMake(30, 29)];
+    [path addLineToPoint:CGPointMake(30, 32)];
+    [path addLineToPoint:CGPointMake(20, 32)];
     [path closePath];
     logoShape.path = path.CGPath;
     logoShape.fillColor = [UIColor whiteColor].CGColor;
     logoShape.frame = CGRectMake(0,0,size,size);
 
-    // Градиент белый->розовый, замаскированный буквой "A"
+    // градиент белый->розовый, замаскированный буквой
     CAGradientLayer *grad = [CAGradientLayer layer];
     grad.frame = CGRectMake(0,0,size,size);
     grad.colors = @[
@@ -385,6 +374,37 @@ static AntisocialGUIManager* sharedInst=nil;
     grad.endPoint = CGPointMake(1,1);
     grad.mask = logoShape;
     [self.floatingIcon.layer addSublayer:grad];
+    self.iconGrad = grad;
+
+    // ПУЛЬСАЦИЯ неона (свечение дышит)
+    CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
+    pulse.fromValue = @(0.45f);
+    pulse.toValue   = @(1.0f);
+    pulse.duration  = 1.6f;
+    pulse.autoreverses = YES;
+    pulse.repeatCount = HUGE_VALF;
+    pulse.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    [self.floatingIcon.layer addAnimation:pulse forKey:@"neonPulse"];
+
+    CABasicAnimation *pulseR = [CABasicAnimation animationWithKeyPath:@"shadowRadius"];
+    pulseR.fromValue = @(8.0f);
+    pulseR.toValue   = @(20.0f);
+    pulseR.duration  = 1.6f;
+    pulseR.autoreverses = YES;
+    pulseR.repeatCount = HUGE_VALF;
+    pulseR.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    [self.floatingIcon.layer addAnimation:pulseR forKey:@"neonPulseR"];
+
+    // лёгкое свечение самой буквы (внутри)
+    CABasicAnimation *glow = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
+    glow.fromValue = @(0.5f);
+    glow.toValue   = @(1.0f);
+    glow.duration  = 1.6f;
+    glow.autoreverses = YES;
+    glow.repeatCount = HUGE_VALF;
+    logoShape.shadowColor = [UIColor colorWithRed:200/255.f green:160/255.f blue:255/255.f alpha:1.0].CGColor;
+    logoShape.shadowRadius = 3.0f;
+    [logoShape addAnimation:glow forKey:@"logoGlow"];
 
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleMenu)];
     [self.floatingIcon addGestureRecognizer:tap];
@@ -399,8 +419,8 @@ static AntisocialGUIManager* sharedInst=nil;
     CGPoint translation = [pan translationInView:pan.view.superview];
     CGPoint newCenter = CGPointMake(pan.view.center.x + translation.x, pan.view.center.y + translation.y);
     CGSize sc = [UIScreen mainScreen].bounds.size;
-    newCenter.x = MAX(24, MIN(sc.width-24, newCenter.x));
-    newCenter.y = MAX(24, MIN(sc.height-24, newCenter.y));
+    newCenter.x = MAX(25, MIN(sc.width-25, newCenter.x));
+    newCenter.y = MAX(25, MIN(sc.height-25, newCenter.y));
     pan.view.center = newCenter;
     [pan setTranslation:CGPointZero inView:pan.view.superview];
 }
@@ -465,6 +485,7 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGui::Begin("##main",0,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoBringToFrontOnFocus);
     {
         ImRect wr=ImGui::GetCurrentWindow()->Rect(); ImDrawList* dl=ImGui::GetWindowDrawList();
+        // фон окна (без рамки по периметру)
         int vs=dl->VtxBuffer.Size;
         dl->AddRectFilled(wr.Min,wr.Max,ImColor(16,16,28),ImGui::GetStyle().WindowRounding);
         int ve=dl->VtxBuffer.Size;
@@ -535,9 +556,9 @@ static AntisocialGUIManager* sharedInst=nil;
             ImGui::EndChild();
         }
 
-        // ===== ТОНКИЕ разделители БЕЗ градиента (границы убраны) =====
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55,60),1);
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55,60),1);
+        // ===== разделители: почти невидимые, НЕ создают рамок =====
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(25,25,35,30),1);
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(25,25,35,30),1);
 
         child_alpha=anim_f(ImGui::GetID("##ca"),1.f,0.15f);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,child_alpha);
@@ -593,7 +614,7 @@ static AntisocialGUIManager* sharedInst=nil;
         ImGui::PopStyleVar();
         ImGui::PopStyleVar();
 
-        // ===== ПЛАВНЫЙ drag окна (по экранным координатам, без дрожания) =====
+        // ===== ПЛАВНЫЙ drag (только верхняя полоса, без рамок) =====
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
         if(inBar&&ImGui::IsMouseClicked(0)){
@@ -604,7 +625,6 @@ static AntisocialGUIManager* sharedInst=nil;
             CGPoint target=CGPointMake(g_touchScreenPos.x-self.dragStartPos.x, g_touchScreenPos.y-self.dragStartPos.y);
             target.x=MAX(0,MIN(target.x,self.screenWidth-W));
             target.y=MAX(0,MIN(target.y,self.screenHeight-H));
-            // интерполяция к цели
             self.menuOffset=CGPointMake(self.menuOffset.x+(target.x-self.menuOffset.x)*0.25,
                                         self.menuOffset.y+(target.y-self.menuOffset.y)*0.25);
             self.hostView.frame=CGRectMake(self.menuOffset.x,self.menuOffset.y,W,H);
