@@ -23,6 +23,7 @@ static bool g_wallbang_status = true, g_norecoil_status = true;
 static bool g_simple_switch = false, g_auto_strafe = false, g_fast_drop = false;
 static int  g_slider = 0;
 static int  g_slider2 = 0;
+static int  g_esp_dist = 100;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 
 static CGPoint g_touchScreenPos = CGPointZero;
@@ -327,31 +328,35 @@ static AntisocialGUIManager* sharedInst=nil;
 
 - (void)setupFloatingIcon:(UIWindow*)kw {
     CGSize sc = kw.bounds.size;
-    CGFloat size = 50.0f;
-    CGFloat ix = sc.width - 72, iy = 42;
+    CGFloat size = 42.0f;  // ← иконка поменьше
+    CGFloat ix = sc.width - 66, iy = 42;
     self.floatingIcon = [[UIView alloc] initWithFrame:CGRectMake(ix, iy, size, size)];
     self.floatingIcon.backgroundColor = [UIColor colorWithRed:10/255.f green:10/255.f blue:18/255.f alpha:0.95];
     self.floatingIcon.layer.cornerRadius = size * 0.5f;
     self.floatingIcon.layer.borderWidth = 1.0f;
-    self.floatingIcon.layer.borderColor = [UIColor colorWithRed:120/255.f green:200/255.f blue:255/255.f alpha:0.5].CGColor;
+    // фиолетовая рамка
+    self.floatingIcon.layer.borderColor = [UIColor colorWithRed:180/255.f green:130/255.f blue:255/255.f alpha:0.6].CGColor;
     self.floatingIcon.layer.masksToBounds = NO;
-    self.floatingIcon.layer.shadowColor = [UIColor colorWithRed:120/255.f green:180/255.f blue:255/255.f alpha:1.0].CGColor;
+    // фиолетовое свечение
+    self.floatingIcon.layer.shadowColor = [UIColor colorWithRed:180/255.f green:100/255.f blue:255/255.f alpha:1.0].CGColor;
     self.floatingIcon.layer.shadowOffset = CGSizeZero;
     self.floatingIcon.layer.shadowRadius = 12.0f;
     self.floatingIcon.layer.shadowOpacity = 0.9f;
+    // векторный путь "A"
     CAShapeLayer *logoShape = [CAShapeLayer layer];
     UIBezierPath *path = [UIBezierPath bezierPath];
-    [path moveToPoint:CGPointMake(25, 13)];
-    [path addLineToPoint:CGPointMake(14, 36)];
-    [path addLineToPoint:CGPointMake(19, 36)];
-    [path addLineToPoint:CGPointMake(25, 22)];
-    [path addLineToPoint:CGPointMake(31, 36)];
-    [path addLineToPoint:CGPointMake(36, 36)];
+    float s = size / 50.0f;  // масштабирование под размер
+    [path moveToPoint:CGPointMake(25*s, 13*s)];
+    [path addLineToPoint:CGPointMake(14*s, 36*s)];
+    [path addLineToPoint:CGPointMake(19*s, 36*s)];
+    [path addLineToPoint:CGPointMake(25*s, 22*s)];
+    [path addLineToPoint:CGPointMake(31*s, 36*s)];
+    [path addLineToPoint:CGPointMake(36*s, 36*s)];
     [path closePath];
-    [path moveToPoint:CGPointMake(20, 29)];
-    [path addLineToPoint:CGPointMake(30, 29)];
-    [path addLineToPoint:CGPointMake(30, 32)];
-    [path addLineToPoint:CGPointMake(20, 32)];
+    [path moveToPoint:CGPointMake(20*s, 29*s)];
+    [path addLineToPoint:CGPointMake(30*s, 29*s)];
+    [path addLineToPoint:CGPointMake(30*s, 32*s)];
+    [path addLineToPoint:CGPointMake(20*s, 32*s)];
     [path closePath];
     logoShape.path = path.CGPath;
     logoShape.fillColor = [UIColor whiteColor].CGColor;
@@ -367,6 +372,7 @@ static AntisocialGUIManager* sharedInst=nil;
     grad.mask = logoShape;
     [self.floatingIcon.layer addSublayer:grad];
     self.iconGrad = grad;
+    // пульсация фиолетового свечения
     CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
     pulse.fromValue = @(0.45f);
     pulse.toValue   = @(1.0f);
@@ -377,7 +383,7 @@ static AntisocialGUIManager* sharedInst=nil;
     [self.floatingIcon.layer addAnimation:pulse forKey:@"neonPulse"];
     CABasicAnimation *pulseR = [CABasicAnimation animationWithKeyPath:@"shadowRadius"];
     pulseR.fromValue = @(8.0f);
-    pulseR.toValue   = @(20.0f);
+    pulseR.toValue   = @(18.0f);
     pulseR.duration  = 1.6f;
     pulseR.autoreverses = YES;
     pulseR.repeatCount = HUGE_VALF;
@@ -403,8 +409,8 @@ static AntisocialGUIManager* sharedInst=nil;
     CGPoint translation = [pan translationInView:pan.view.superview];
     CGPoint newCenter = CGPointMake(pan.view.center.x + translation.x, pan.view.center.y + translation.y);
     CGSize sc = [UIScreen mainScreen].bounds.size;
-    newCenter.x = MAX(25, MIN(sc.width-25, newCenter.x));
-    newCenter.y = MAX(25, MIN(sc.height-25, newCenter.y));
+    newCenter.x = MAX(21, MIN(sc.width-21, newCenter.x));
+    newCenter.y = MAX(21, MIN(sc.height-21, newCenter.y));
     pan.view.center = newCenter;
     [pan setTranslation:CGPointZero inView:pan.view.superview];
 }
@@ -456,7 +462,7 @@ static AntisocialGUIManager* sharedInst=nil;
     MTLRenderPassDescriptor* rp=[MTLRenderPassDescriptor renderPassDescriptor];
     rp.colorAttachments[0].texture=dr.texture; rp.colorAttachments[0].loadAction=MTLLoadActionClear;
     rp.colorAttachments[0].storeAction=MTLStoreActionStore;
-    // clearColor = фон GUI, чтобы не было прозрачных границ
+    // clearColor = цвет фона GUI (чтобы за rounding не было видно игры)
     rp.colorAttachments[0].clearColor=MTLClearColorMake(16/255.f,16/255.f,28/255.f,1.0f);
     ImGui_ImplMetal_NewFrame(rp); ImGui::NewFrame();
     hooks::update();
@@ -473,10 +479,12 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGui::Begin("##main",0,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoBringToFrontOnFocus);
     {
         ImRect wr=ImGui::GetCurrentWindow()->Rect(); ImDrawList* dl=ImGui::GetWindowDrawList();
-        // фон БЕЗ rounding — заполняет весь экран, убирает границы
-        dl->AddRectFilled(wr.Min,wr.Max,ImColor(16,16,28),0);
+        // фон С rounding (углы скруглённые), clearColor того же цвета — границ нет
         int vs=dl->VtxBuffer.Size;
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,vs,dl->VtxBuffer.Size,wr.Min,wr.Max+ImVec2(600,600),IM_COL32(16,16,28,255),IM_COL32(27,15,61,255));
+        dl->AddRectFilled(wr.Min,wr.Max,ImColor(16,16,28),ImGui::GetStyle().WindowRounding);
+        int ve=dl->VtxBuffer.Size;
+        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,vs,ve,wr.Min,wr.Max+ImVec2(600,600),IM_COL32(16,16,28,255),IM_COL32(27,15,61,255));
+        // ЛЕВЫЙ САЙДБАР
         ImGui::SetCursorPos(ImVec2(0,0));
         ImGui::BeginChild("##left",ImVec2(left,wr.GetHeight()),false);
         {
@@ -521,6 +529,7 @@ static AntisocialGUIManager* sharedInst=nil;
             dl->AddText(ImVec2(pr.Min.x+rad*2+12,pr.GetCenter().y-1),ImColor(245,215,66),"Premium");
             ImGui::EndChild();
         }
+        // ВЕРХНИЕ SUBTABS
         ImGui::SetCursorPos(ImVec2(left,0));
         ImGui::BeginChild("##top",ImVec2(ImGui::GetContentRegionAvail().x,top),false);
         {
@@ -538,15 +547,19 @@ static AntisocialGUIManager* sharedInst=nil;
             }
             ImGui::EndChild();
         }
-        // разделители почти невидимые
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(25,25,35,30),1);
-        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(25,25,35,30),1);
+        // разделитель между top и content (видимый)
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55,80),1);
+        // вертикальный разделитель (тонкий)
+        dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(25,25,35,40),1);
         child_alpha=anim_f(ImGui::GetID("##ca"),1.f,0.15f);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,child_alpha*sub_alpha);
-        ImGui::SetCursorPos(ImVec2(left+11, top+1+(35*(1-child_alpha*sub_alpha))));
-        float colw=(W-left-30)/2-5;
+        ImGui::SetCursorPos(ImVec2(left+11, top+10+(35*(1-child_alpha*sub_alpha))));
+        // пропорциональные колонки
+        float availW = W - left - 22;
+        float colw = (availW - 10) * 0.5f;
+        float colh = H - top - 20;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(10,10));
-        ImGui::BeginChild("##c1",ImVec2(colw,ImGui::GetContentRegionAvail().y),false,ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##c1",ImVec2(colw,colh),false,ImGuiWindowFlags_NoScrollbar);
         {
             ImGui::ItemSize(ImVec2(0,0));
             if(self.m_current==0){
@@ -557,8 +570,10 @@ static AntisocialGUIManager* sharedInst=nil;
                 toggle("Wallbang",&g_wallbang,nullptr);
                 toggle("NoRecoil",&g_norecoil,nullptr);
             } else if(self.m_current==2){
-                slider_int("ESP Distance",&g_slider,0,200);
+                // World General: слайдер и колорпикер
+                slider_int("ESP Distance",&g_esp_dist,50,300);
                 color("ESP Color",{&g_col1,&g_col2});
+                toggle("Show Boxes",&g_esp_box,nullptr);
             } else if(self.m_current==3){
                 toggle("BunnyHop",&g_bunnyhop,nullptr);
             } else if(self.m_current==4){
@@ -570,7 +585,7 @@ static AntisocialGUIManager* sharedInst=nil;
             ImGui::EndChild();
         }
         ImGui::SameLine(0,10);
-        ImGui::BeginChild("##c2",ImVec2(colw,ImGui::GetContentRegionAvail().y),false,ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##c2",ImVec2(colw,colh),false,ImGuiWindowFlags_NoScrollbar);
         {
             ImGui::ItemSize(ImVec2(0,0));
             if(self.m_current==0){
@@ -581,7 +596,11 @@ static AntisocialGUIManager* sharedInst=nil;
                 internal_toggle("NoRecoil",&g_norecoil_status);
                 end_category();
             } else if(self.m_current==2){
-                begin_category("Advanced"); slider_int("Test slider",&g_slider2,0,100); end_category();
+                // World Advanced: вторая колонка
+                begin_category("ESP Settings");
+                toggle("Show Health",&g_esp_health,nullptr);
+                toggle("Show Names",&g_esp_nickname,nullptr);
+                end_category();
             } else if(self.m_current==3){
                 begin_category("Movement"); internal_toggle("Auto Strafe",&g_auto_strafe); end_category();
             } else if(self.m_current==4){
@@ -594,6 +613,7 @@ static AntisocialGUIManager* sharedInst=nil;
         }
         ImGui::PopStyleVar();
         ImGui::PopStyleVar();
+        // drag
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
         if(inBar&&ImGui::IsMouseClicked(0)){
