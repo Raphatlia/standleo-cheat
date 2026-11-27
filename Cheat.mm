@@ -28,117 +28,55 @@ static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 static CGPoint g_touchScreenPos = CGPointZero;
 
 #pragma mark - ===== HOOKS / MEMORY =====
-#include <mach/mach.h>
-#include <mach-o/dyld.h>
-#include <cstring>
-
 namespace hooks {
-    static uintptr_t g_base = 0;
-    static bool g_ready = false;
-    
-    // ОФСЕТЫ ИЗ DUMP.CS
+    static uintptr_t g_base  = 0;
+    static bool      g_ready = false;
     namespace off {
-        // PlayerControls.GetKeyboardInputs() -> PlayerInputs*
-        constexpr uintptr_t get_keyboard_inputs = 0x1F081C0;
-        // PlayerControls.GetTouchInputs() -> PlayerInputs*
-        constexpr uintptr_t get_touch_inputs = 0x1F081DC;
-        
-        // PlayerInputs.IsToJump offset
-        constexpr uintptr_t is_to_jump = 0x23;
-        
-        // GunController._recoilMult offset
-        constexpr uintptr_t recoil_mult = 0x1A0;
+        constexpr uintptr_t local_player_ptr = 0x0;
+        constexpr uintptr_t ent_movement     = 0xA8;
+        constexpr uintptr_t mov_translation  = 0x70;
+        constexpr uintptr_t trans_jump       = 0x50;
+        constexpr uintptr_t trans_field      = 0x28;
+        constexpr uintptr_t jump_impulse     = 0xA8;
+        constexpr uintptr_t ent_weapon       = 0x0;
+        constexpr uintptr_t gun_recoil_mult  = 0x0;
     }
-    
-    // Найти base UnityFramework
     static uintptr_t find_base() {
         for (uint32_t i = 0; i < _dyld_image_count(); i++) {
             const char* n = _dyld_get_image_name(i);
             if (n && strstr(n, "UnityFramework"))
                 return (uintptr_t)_dyld_get_image_header(i);
         }
-        return 0;
+        return (uintptr_t)_dyld_get_image_header(0);
     }
-    
-    // Inline hook для ARM64
-    static bool inline_hook(uintptr_t target, uintptr_t hook, uintptr_t* original) {
-        vm_size_t page_size = 4096;
-        uintptr_t page_start = target & ~(page_size - 1);
-        
-        vm_protect(mach_task_self(), page_start, page_size, false,
-                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-        
-        uint8_t orig_bytes[32];
-        memcpy(orig_bytes, (void*)target, 16);
-        
-        uint32_t* code = (uint32_t*)target;
-        code[0] = 0x58000050;
-        code[1] = 0xD61F0200;
-        *(uintptr_t*)(code + 2) = hook;
-        
-        uintptr_t tramp = (uintptr_t)malloc(64);
-        memcpy((void*)tramp, orig_bytes, 16);
-        code = (uint32_t*)(tramp + 16);
-        code[0] = 0x58000050;
-        code[1] = 0xD61F0200;
-        *(uintptr_t*)(code + 2) = target + 16;
-        
-        if (original) *original = tramp;
-        
-        vm_protect(mach_task_self(), page_start, page_size, false,
-                   VM_PROT_READ | VM_PROT_EXECUTE);
-        
-        sys_icache_invalidate((void*)target, 16);
-        sys_icache_invalidate((void*)tramp, 32);
-        
-        return true;
+    static bool valid(uintptr_t p) { return p > 0x100000000ull && p < 0x7fffffffffull; }
+    template<typename T> static T sread(uintptr_t a) { return valid(a) ? *(T*)a : T(0); }
+    template<typename T> static bool swrite(uintptr_t a, T v) { if (!valid(a)) return false; *(T*)a = v; return true; }
+    static void write_obscured_float(uintptr_t loc, float value) {
+        if (!valid(loc)) return;
+        int key = *(int*)loc;
+        union { int i; float f; } u; u.f = value;
+        swrite<float>(loc + 0x4, (float)(u.i ^ key));
     }
-    
-    // Тип функции GetInputs
-    typedef void* (*GetInputs_t)(void* player_controls);
-    static GetInputs_t orig_get_keyboard = nullptr;
-    static GetInputs_t orig_get_touch = nullptr;
-    
-    // Хук GetKeyboardInputs
-    static void* hk_get_keyboard(void* player_controls) {
-        void* ret = orig_get_keyboard(player_controls);
-        if (ret && g_bunnyhop) {
-            *(bool*)((uintptr_t)ret + off::is_to_jump) = true;
-        }
-        return ret;
+    static void init() { if (g_ready) return; g_base = find_base(); g_ready = (g_base != 0); }
+    static uintptr_t local_player() {
+        if (!g_ready || !off::local_player_ptr) return 0;
+        return sread<uintptr_t>(g_base + off::local_player_ptr);
     }
-    
-    // Хук GetTouchInputs
-    static void* hk_get_touch(void* player_controls) {
-        void* ret = orig_get_touch(player_controls);
-        if (ret && g_bunnyhop) {
-            *(bool*)((uintptr_t)ret + off::is_to_jump) = true;
-        }
-        return ret;
+    static void bunnyhop() {
+        uintptr_t ent = local_player(); if (!ent) return;
+        uintptr_t mov = sread<uintptr_t>(ent + off::ent_movement);    if (!mov) return;
+        uintptr_t tr  = sread<uintptr_t>(mov + off::mov_translation); if (!tr)  return;
+        uintptr_t jp  = sread<uintptr_t>(tr  + off::trans_jump);      if (!jp)  return;
+        swrite<float>(tr + off::trans_field, 999.f);
+        write_obscured_float(jp + off::jump_impulse, 7.9f);
     }
-    
-    void init() {
-        if (g_ready) return;
-        g_base = find_base();
-        g_ready = (g_base != 0);
-        
-        if (g_ready) {
-            uintptr_t target1 = g_base + off::get_keyboard_inputs;
-            inline_hook(target1, (uintptr_t)hk_get_keyboard, (uintptr_t*)&orig_get_keyboard);
-            
-            uintptr_t target2 = g_base + off::get_touch_inputs;
-            inline_hook(target2, (uintptr_t)hk_get_touch, (uintptr_t*)&orig_get_touch);
-        }
-    }
-    
-    void update() {
-        if (!g_ready) init();
+    static void norecoil() {}
+    static void update() {
+        init();
         if (!g_ready) return;
-        
-        // NoRecoil — заглушка, нужен адрес GunController
-        if (g_norecoil) {
-            // TODO: найти GunController и записать 0.0f в _recoilMult
-        }
+        if (g_bunnyhop) bunnyhop();
+        if (g_norecoil) norecoil();
     }
 }
 
@@ -387,26 +325,20 @@ static AntisocialGUIManager* sharedInst=nil;
 + (void)load { for(int i=1;i<=15;i++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [[AntisocialGUIManager shared] trySetup]; }); }
 - (UIWindow*)findKeyWindow { for(UIScene* s in UIApplication.sharedApplication.connectedScenes){ if(![s isKindOfClass:[UIWindowScene class]])continue; for(UIWindow* w in ((UIWindowScene*)s).windows) if(w.isKeyWindow) return w;} return nil; }
 
-// ===== Кнопка: лого "A" + НЕОНОВОЕ пульсирующее свечение =====
 - (void)setupFloatingIcon:(UIWindow*)kw {
     CGSize sc = kw.bounds.size;
     CGFloat size = 50.0f;
     CGFloat ix = sc.width - 72, iy = 42;
-
     self.floatingIcon = [[UIView alloc] initWithFrame:CGRectMake(ix, iy, size, size)];
     self.floatingIcon.backgroundColor = [UIColor colorWithRed:10/255.f green:10/255.f blue:18/255.f alpha:0.95];
     self.floatingIcon.layer.cornerRadius = size * 0.5f;
     self.floatingIcon.layer.borderWidth = 1.0f;
     self.floatingIcon.layer.borderColor = [UIColor colorWithRed:120/255.f green:200/255.f blue:255/255.f alpha:0.5].CGColor;
     self.floatingIcon.layer.masksToBounds = NO;
-
-    // неоновое свечение (базовые параметры)
     self.floatingIcon.layer.shadowColor = [UIColor colorWithRed:120/255.f green:180/255.f blue:255/255.f alpha:1.0].CGColor;
     self.floatingIcon.layer.shadowOffset = CGSizeZero;
     self.floatingIcon.layer.shadowRadius = 12.0f;
     self.floatingIcon.layer.shadowOpacity = 0.9f;
-
-    // векторный путь буквы "A" (как в GUI)
     CAShapeLayer *logoShape = [CAShapeLayer layer];
     UIBezierPath *path = [UIBezierPath bezierPath];
     [path moveToPoint:CGPointMake(25, 13)];
@@ -424,8 +356,6 @@ static AntisocialGUIManager* sharedInst=nil;
     logoShape.path = path.CGPath;
     logoShape.fillColor = [UIColor whiteColor].CGColor;
     logoShape.frame = CGRectMake(0,0,size,size);
-
-    // градиент белый->розовый, замаскированный буквой
     CAGradientLayer *grad = [CAGradientLayer layer];
     grad.frame = CGRectMake(0,0,size,size);
     grad.colors = @[
@@ -437,8 +367,6 @@ static AntisocialGUIManager* sharedInst=nil;
     grad.mask = logoShape;
     [self.floatingIcon.layer addSublayer:grad];
     self.iconGrad = grad;
-
-    // ПУЛЬСАЦИЯ неона (свечение дышит)
     CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
     pulse.fromValue = @(0.45f);
     pulse.toValue   = @(1.0f);
@@ -447,7 +375,6 @@ static AntisocialGUIManager* sharedInst=nil;
     pulse.repeatCount = HUGE_VALF;
     pulse.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
     [self.floatingIcon.layer addAnimation:pulse forKey:@"neonPulse"];
-
     CABasicAnimation *pulseR = [CABasicAnimation animationWithKeyPath:@"shadowRadius"];
     pulseR.fromValue = @(8.0f);
     pulseR.toValue   = @(20.0f);
@@ -456,8 +383,6 @@ static AntisocialGUIManager* sharedInst=nil;
     pulseR.repeatCount = HUGE_VALF;
     pulseR.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
     [self.floatingIcon.layer addAnimation:pulseR forKey:@"neonPulseR"];
-
-    // лёгкое свечение самой буквы (внутри)
     CABasicAnimation *glow = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
     glow.fromValue = @(0.5f);
     glow.toValue   = @(1.0f);
@@ -467,13 +392,10 @@ static AntisocialGUIManager* sharedInst=nil;
     logoShape.shadowColor = [UIColor colorWithRed:200/255.f green:160/255.f blue:255/255.f alpha:1.0].CGColor;
     logoShape.shadowRadius = 3.0f;
     [logoShape addAnimation:glow forKey:@"logoGlow"];
-
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleMenu)];
     [self.floatingIcon addGestureRecognizer:tap];
-
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleIconPan:)];
     [self.floatingIcon addGestureRecognizer:pan];
-
     [kw addSubview:self.floatingIcon];
 }
 
@@ -533,27 +455,28 @@ static AntisocialGUIManager* sharedInst=nil;
     id<CAMetalDrawable> dr=[self.metalLayer nextDrawable]; if(!dr) return;
     MTLRenderPassDescriptor* rp=[MTLRenderPassDescriptor renderPassDescriptor];
     rp.colorAttachments[0].texture=dr.texture; rp.colorAttachments[0].loadAction=MTLLoadActionClear;
-    rp.colorAttachments[0].storeAction=MTLStoreActionStore; rp.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);
+    rp.colorAttachments[0].storeAction=MTLStoreActionStore;
+    // clearColor = фон GUI, чтобы не было прозрачных границ
+    rp.colorAttachments[0].clearColor=MTLClearColorMake(16/255.f,16/255.f,28/255.f,1.0f);
     ImGui_ImplMetal_NewFrame(rp); ImGui::NewFrame();
-
     hooks::update();
-
     static float child_alpha=0.f;
+    static float sub_alpha=0.f;
+    static int prev_sub=-1;
+    if (prev_sub!=self.m_sub) { prev_sub=self.m_sub; sub_alpha=0.f; }
+    sub_alpha=anim_f(ImGui::GetID("##sub_alpha"),1.f,0.15f);
     const float W=620,H=370,left=140,top=40;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
     ImGui::SetNextWindowSize(ImVec2(W,H));
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x/2-W/2, ImGui::GetIO().DisplaySize.y/2-H/2), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
     ImGui::Begin("##main",0,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoBringToFrontOnFocus);
     {
         ImRect wr=ImGui::GetCurrentWindow()->Rect(); ImDrawList* dl=ImGui::GetWindowDrawList();
-        // фон окна (без рамки по периметру)
+        // фон БЕЗ rounding — заполняет весь экран, убирает границы
+        dl->AddRectFilled(wr.Min,wr.Max,ImColor(16,16,28),0);
         int vs=dl->VtxBuffer.Size;
-        dl->AddRectFilled(wr.Min,wr.Max,ImColor(16,16,28),ImGui::GetStyle().WindowRounding);
-        int ve=dl->VtxBuffer.Size;
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,vs,ve,wr.Min,wr.Max+ImVec2(600,600),IM_COL32(16,16,28,255),IM_COL32(27,15,61,255));
-
-        // ЛЕВЫЙ САЙДБАР
+        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,vs,dl->VtxBuffer.Size,wr.Min,wr.Max+ImVec2(600,600),IM_COL32(16,16,28,255),IM_COL32(27,15,61,255));
         ImGui::SetCursorPos(ImVec2(0,0));
         ImGui::BeginChild("##left",ImVec2(left,wr.GetHeight()),false);
         {
@@ -598,8 +521,6 @@ static AntisocialGUIManager* sharedInst=nil;
             dl->AddText(ImVec2(pr.Min.x+rad*2+12,pr.GetCenter().y-1),ImColor(245,215,66),"Premium");
             ImGui::EndChild();
         }
-
-        // ВЕРХНИЕ SUBTABS
         ImGui::SetCursorPos(ImVec2(left,0));
         ImGui::BeginChild("##top",ImVec2(ImGui::GetContentRegionAvail().x,top),false);
         {
@@ -608,7 +529,7 @@ static AntisocialGUIManager* sharedInst=nil;
             for(int it=0;it<2;it++){
                 ImVec2 cc=ImGui::GetCursorScreenPos();
                 ImVec2 ts=ImVec2(ImGui::CalcTextSize(sub[it]).x+20,top);
-                if(ImGui::InvisibleButton(sub[it],ts)){ self.m_sub=it; child_alpha=0.f; }
+                if(ImGui::InvisibleButton(sub[it],ts)){ self.m_sub=it; sub_alpha=0.f; }
                 ImRect tr(cc+ImVec2(0,6),cc+ts-ImVec2(0,5));
                 ImVec4 txt=anim_v(ImGui::GetID(sub[it]), (it==self.m_sub)?ImVec4(120/255.f,123/255.f,173/255.f,1):ImVec4(220/255.f,220/255.f,220/255.f,1));
                 ImVec2 tsz=ImGui::CalcTextSize(sub[it]);
@@ -617,15 +538,13 @@ static AntisocialGUIManager* sharedInst=nil;
             }
             ImGui::EndChild();
         }
-
-        // ===== разделители: почти невидимые, НЕ создают рамок =====
+        // разделители почти невидимые
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(25,25,35,30),1);
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(25,25,35,30),1);
-
         child_alpha=anim_f(ImGui::GetID("##ca"),1.f,0.15f);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,child_alpha);
-        ImGui::SetCursorPos(ImVec2(left+11, top+1+(35*(1-child_alpha))));
-        float colw=ImGui::GetContentRegionAvail().x/2-0.5f;
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,child_alpha*sub_alpha);
+        ImGui::SetCursorPos(ImVec2(left+11, top+1+(35*(1-child_alpha*sub_alpha))));
+        float colw=(W-left-30)/2-5;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(10,10));
         ImGui::BeginChild("##c1",ImVec2(colw,ImGui::GetContentRegionAvail().y),false,ImGuiWindowFlags_NoScrollbar);
         {
@@ -638,8 +557,8 @@ static AntisocialGUIManager* sharedInst=nil;
                 toggle("Wallbang",&g_wallbang,nullptr);
                 toggle("NoRecoil",&g_norecoil,nullptr);
             } else if(self.m_current==2){
-                slider_int("And slider??",&g_slider,-5,5);
-                color("Colorpicker",{&g_col1,&g_col2});
+                slider_int("ESP Distance",&g_slider,0,200);
+                color("ESP Color",{&g_col1,&g_col2});
             } else if(self.m_current==3){
                 toggle("BunnyHop",&g_bunnyhop,nullptr);
             } else if(self.m_current==4){
@@ -650,7 +569,7 @@ static AntisocialGUIManager* sharedInst=nil;
             internal_scroll("##left_window");
             ImGui::EndChild();
         }
-        ImGui::SameLine(0,0);
+        ImGui::SameLine(0,10);
         ImGui::BeginChild("##c2",ImVec2(colw,ImGui::GetContentRegionAvail().y),false,ImGuiWindowFlags_NoScrollbar);
         {
             ImGui::ItemSize(ImVec2(0,0));
@@ -662,7 +581,7 @@ static AntisocialGUIManager* sharedInst=nil;
                 internal_toggle("NoRecoil",&g_norecoil_status);
                 end_category();
             } else if(self.m_current==2){
-                begin_category("Combo"); slider_int("Test slider",&g_slider2,0,100); end_category();
+                begin_category("Advanced"); slider_int("Test slider",&g_slider2,0,100); end_category();
             } else if(self.m_current==3){
                 begin_category("Movement"); internal_toggle("Auto Strafe",&g_auto_strafe); end_category();
             } else if(self.m_current==4){
@@ -675,8 +594,6 @@ static AntisocialGUIManager* sharedInst=nil;
         }
         ImGui::PopStyleVar();
         ImGui::PopStyleVar();
-
-        // ===== ПЛАВНЫЙ drag (только верхняя полоса, без рамок) =====
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
         if(inBar&&ImGui::IsMouseClicked(0)){
@@ -691,7 +608,6 @@ static AntisocialGUIManager* sharedInst=nil;
                                         self.menuOffset.y+(target.y-self.menuOffset.y)*0.25);
             self.hostView.frame=CGRectMake(self.menuOffset.x,self.menuOffset.y,W,H);
         } else if(!ImGui::IsMouseDown(0)) self.isDragging=NO;
-
         ImGui::End();
     }
     ImGui::PopStyleVar(2);
