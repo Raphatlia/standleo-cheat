@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <functional>
 #include <unordered_map>
+#include <mach/mach.h>
 
 // ===== Состояния =====
 static bool g_wallbang = true, g_norecoil = true, g_bunnyhop = false;
@@ -23,6 +24,52 @@ static bool g_simple_switch = false, g_auto_strafe = false, g_fast_drop = false;
 static int  g_slider = 0;
 static int  g_combo = 0;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
+
+// ===== Хуки (заглушки для реальной интеграции) =====
+namespace hooks {
+    // Адреса памяти (нужно найти через дамп)
+    static uintptr_t g_base_address = 0;
+    
+    // Функции записи в память
+    static void write_float(uintptr_t address, float value) {
+        if (address == 0) return;
+        vm_protect(mach_task_self(), address, sizeof(float), false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+        vm_write(mach_task_self(), address, (vm_address_t)&value, sizeof(float));
+    }
+    
+    static void write_bool(uintptr_t address, bool value) {
+        if (address == 0) return;
+        uint8_t v = value ? 1 : 0;
+        vm_protect(mach_task_self(), address, sizeof(uint8_t), false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+        vm_write(mach_task_self(), address, (vm_address_t)&v, sizeof(uint8_t));
+    }
+    
+    // Хуки функций
+    static void apply_wallbang() {
+        if (!g_wallbang) return;
+        // TODO: Найти адрес m_bCanShootThroughWalls и записать true
+        // write_bool(g_base_address + 0xOFFSET, true);
+    }
+    
+    static void apply_norecoil() {
+        if (!g_norecoil) return;
+        // TODO: Найти адрес m_fRecoilMult и записать 0.0f
+        // write_float(g_base_address + 0xOFFSET, 0.0f);
+    }
+    
+    static void apply_bunnyhop() {
+        if (!g_bunnyhop) return;
+        // TODO: Найти адрес m_bIsToJump и записать true
+        // write_bool(g_base_address + 0xOFFSET, true);
+    }
+    
+    // Вызывать каждый кадр
+    static void update() {
+        apply_wallbang();
+        apply_norecoil();
+        apply_bunnyhop();
+    }
+}
 
 // ===== Аниматор =====
 static float anim_f(ImGuiID id, float target, float dur = 0.10f) {
@@ -109,47 +156,43 @@ static void toggle(const char* label, bool* v, const char* desc, std::function<v
     ImGui::PopStyleVar();
 }
 
-// ===== slider_int — пилюля с градиентом белый→розовый, без кружка =====
+// ===== slider_int — распухает только при drag =====
 static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
     const ImGuiStyle& st = ImGui::GetStyle();
     const ImGuiID id = w->GetID(label);
-    const ImVec2 ls = ImGui::CalcTextSize(label, NULL, true);
     const float width = ImGui::GetContentRegionAvail().x;
-    const float h = st.FramePadding.y * 4;
-    const ImVec2 pos = w->DC.CursorPos;
-    const ImRect frame_bb(pos + ImVec2(0, ls.y + st.FramePadding.y), pos + ImVec2(width, ls.y + st.FramePadding.y + h));
-    const ImRect total_bb(pos, frame_bb.Max);
+    const ImVec2 ls = ImGui::CalcTextSize(label, NULL, true);
+    const ImRect frame_bb(w->DC.CursorPos + ImVec2(0, ls.y + st.FramePadding.y), w->DC.CursorPos + ImVec2(0, ls.y + st.FramePadding.y) + ImVec2(width, st.FramePadding.y*4));
+    const ImRect total_bb(w->DC.CursorPos, frame_bb.Max);
     ImGui::ItemSize(total_bb, st.FramePadding.y);
     if (!ImGui::ItemAdd(total_bb, id, &frame_bb)) return false;
-
     const bool hovered = ImGui::ItemHoverable(total_bb, id, ImGuiItemFlags_None);
-    bool changed = false;
-
-    // Drag по всей полосе — зажал и тяни, или тап в любое место
-    if (ImGui::IsMouseDown(0) && (hovered || ImGui::IsItemActive())) {
-        ImGui::SetActiveID(id, w);
-        float ratio = ImClamp((ImGui::GetIO().MousePos.x - frame_bb.Min.x) / frame_bb.GetWidth(), 0.f, 1.f);
-        int nv = vmin + (int)roundf(ratio * (vmax - vmin));
-        if (nv != *v) { *v = nv; changed = true; }
-    }
-    if (ImGui::IsItemActive() && !ImGui::IsMouseDown(0)) ImGui::ClearActiveID();
-
-    float grab = anim_f(id+5, frame_bb.Min.x + (frame_bb.GetWidth() * (float)(*v - vmin) / (float)(vmax - vmin)), 0.06f);
-    ImVec4 text = anim_v(id+6, (ImGui::IsItemActive()||hovered||changed) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
+    ImRect grab_bb;
+    bool changed = ImGui::SliderBehavior(total_bb, id, ImGuiDataType_S32, v, &vmin, &vmax, "%d", ImGuiSliderFlags_None, &grab_bb);
+    if (changed) ImGui::MarkItemEdited(id);
+    
+    // Распухание только при active (зажат и двигается)
+    bool is_active = ImGui::IsItemActive();
+    float grab_size = is_active ? 14.0f : 10.0f;  // больше когда активен
+    float grab = anim_f(id+5, grab_bb.Max.x - frame_bb.Min.x, 0.06f);
+    ImVec4 text = anim_v(id+6, (is_active||hovered||changed) ? ImVec4(1,1,1,1) : ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImDrawList* d = w->DrawList;
-
-    // Фон-трек (пилюля)
     d->AddRect(frame_bb.Min+ImVec2(0,2), frame_bb.Max-ImVec2(0,2), ImColor(55,55,66,(int)(st.Alpha*255)), 8);
-
-    // Залитая часть — градиент белый→лавандовый, тоже пилюля
     int vs = d->VtxBuffer.Size;
-    d->AddRectFilled(frame_bb.Min, ImVec2(grab, frame_bb.Max.y), ImColor(25,25,25,(int)(st.Alpha*255)), 8);
+    d->AddRectFilled(frame_bb.Min, ImVec2(frame_bb.Min.x+grab, frame_bb.Max.y), ImColor(25,25,25,(int)(st.Alpha*255)), 8);
     int ve = d->VtxBuffer.Size;
-    if (ve>vs) ImGui::ShadeVertsLinearColorGradientKeepAlpha(d,vs,ve,frame_bb.Min,ImVec2(grab,frame_bb.Max.y),IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
-
-    // Текст "label >> value"
+    if (ve>vs) ImGui::ShadeVertsLinearColorGradientKeepAlpha(d,vs,ve,frame_bb.Min,ImVec2(frame_bb.Min.x+grab,frame_bb.Max.y),IM_COL32(218,221,216,255),IM_COL32(234,193,251,255));
+    
+    // Grab кружок (распухает при active)
+    float grab_x = frame_bb.Min.x + grab;
+    float grab_y = frame_bb.GetCenter().y;
+    d->AddCircleFilled(ImVec2(grab_x, grab_y), grab_size*0.5f, IM_COL32(234,193,251,255), 12);
+    if (is_active) {
+        d->AddCircle(ImVec2(grab_x, grab_y), grab_size*0.5f+2, IM_COL32(255,255,255,100), 12);
+    }
+    
     char vb[64]; snprintf(vb,sizeof(vb),"%d",*v);
     ImVec2 sep = ImGui::CalcTextSize(">>");
     d->AddText(total_bb.Min+ImVec2(ls.x+5,0), ImColor(65,65,65), ">>");
@@ -158,7 +201,7 @@ static bool slider_int(const char* label, int* v, int vmin, int vmax) {
     return changed;
 }
 
-// ===== colorpicker =====
+// ===== colorpicker — каждая кнопка свой popup =====
 static void color(const char* label, std::vector<ImVec4*> colors) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return;
@@ -173,47 +216,45 @@ static void color(const char* label, std::vector<ImVec4*> colors) {
     if (!ImGui::ItemAdd(total_bb, id)) return;
     ImDrawList* d = w->DrawList;
     ImVec2 min = total_bb.Max - ImVec2(0, sq-2);
+    
+    // Рисуем квадраты цветов
     for (int i=0;i<(int)colors.size();i++){
         ImRect cb(ImVec2(min.x - sq*(i+1) - 8*i, min.y), ImVec2(min.x - sq*i - 8*i, total_bb.Max.y-2));
-        ImGuiID cid = id*10*(i+1);
+        // Уникальный ID для каждого квадрата
+        ImGuiID cid = id + 1000 + i;
         ImGui::ItemAdd(cb, cid);
-        bool h2,hd; bool p2 = ImGui::ButtonBehavior(cb, cid, &h2, &hd);
-        if (p2) ImGui::OpenPopup("##col_pop");
+        bool h2,hd;
+        bool p2 = ImGui::ButtonBehavior(cb, cid, &h2, &hd);
+        if (p2) {
+            // Уникальное имя popup для каждого цвета
+            char popup_name[32];
+            snprintf(popup_name, sizeof(popup_name), "##col_pop_%d_%d", (int)id, i);
+            ImGui::OpenPopup(popup_name);
+        }
         d->AddRectFilled(cb.Min, cb.Max, ImGui::ColorConvertFloat4ToU32(*colors[i]), 3);
         d->AddRect(cb.Min, cb.Max, ImColor(55,55,66,(int)(st.Alpha*255)), 3);
     }
     if (ls.x>0) d->AddText(total_bb.Min, ImColor(155,155,155), label);
-    if (ImGui::BeginPopup("##col_pop")) {
-        float a = anim_f(id+7,1.f,0.08f);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, a*st.Alpha);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,a*st.Alpha));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,a*st.Alpha));
-        ImGui::ColorPicker4("##p",(float*)colors[0], ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_NoSidePreview|ImGuiColorEditFlags_AlphaBar);
-        ImGui::PopStyleColor(2); ImGui::PopStyleVar();
-        ImGui::EndPopup();
-    } else anim_f(id+7,0.f,0.08f);
+    
+    // Popup для каждого цвета
+    for (int i=0;i<(int)colors.size();i++){
+        char popup_name[32];
+        snprintf(popup_name, sizeof(popup_name), "##col_pop_%d_%d", (int)id, i);
+        if (ImGui::BeginPopup(popup_name)) {
+            float a = anim_f(id+7+i,1.f,0.08f);
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, a*st.Alpha);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,a*st.Alpha));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,a*st.Alpha));
+            ImGui::ColorPicker4("##p",(float*)colors[i], ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_NoSidePreview|ImGuiColorEditFlags_AlphaBar);
+            ImGui::PopStyleColor(2); ImGui::PopStyleVar();
+            ImGui::EndPopup();
+        } else {
+            anim_f(id+7+i,0.f,0.08f);
+        }
+    }
 }
 
-// ===== selectable (закрывает popup) =====
-static bool sel_custom(const char* label, bool selected) {
-    ImGuiWindow* w = ImGui::GetCurrentWindow();
-    if (w->SkipItems) return false;
-    const ImGuiID id = w->GetID(label);
-    const ImVec2 ls = ImGui::CalcTextSize(label,NULL,true);
-    const ImVec2 pos = w->DC.CursorPos;
-    const ImVec2 size(ImGui::GetContentRegionAvail().x, ls.y);
-    const ImRect bb(pos, pos+size);
-    ImGui::ItemSize(size,0);
-    if (!ImGui::ItemAdd(bb,id)) return false;
-    bool hovered,held; bool pressed = ImGui::ButtonBehavior(bb,id,&hovered,&held);
-    ImVec4 text = anim_v(id+8, (selected||hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
-    if (hovered) w->DrawList->AddRectFilled(bb.Min,bb.Max,ImColor(255,255,255,12),4);
-    w->DrawList->AddText(pos, ImGui::ColorConvertFloat4ToU32(text), label);
-    if (pressed && (w->Flags & ImGuiWindowFlags_Popup)) ImGui::CloseCurrentPopup();
-    return pressed;
-}
-
-// ===== combo — через BeginPopup, выбор применяется =====
+// ===== combo — исправленный =====
 static bool combo(const char* label, int* value, std::vector<std::string> entries) {
     ImGuiWindow* w = ImGui::GetCurrentWindow();
     if (w->SkipItems) return false;
@@ -226,39 +267,60 @@ static bool combo(const char* label, int* value, std::vector<std::string> entrie
     const ImRect total(pos, drop.Max);
     ImGui::ItemSize(total,0);
     if (!ImGui::ItemAdd(total,id,&total)) return false;
-
-    bool hovered,held; bool pressed = ImGui::ButtonBehavior(drop,id,&hovered,&held);
-    float open = anim_f(id+9, ImGui::IsPopupOpen("##dd")?1.f:0.f, 0.08f);
-    if (pressed) { if (open<0.01f) ImGui::OpenPopup("##dd"); }
-
-    ImVec4 text = anim_v(id+10, (ImGui::IsItemActive()||hovered||open>0.01f)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
+    
+    bool hovered,held;
+    bool pressed = ImGui::ButtonBehavior(drop,id,&hovered,&held);
+    bool is_open = ImGui::IsPopupOpen("##dd");
+    if (pressed) {
+        if (is_open) ImGui::CloseCurrentPopup();
+        else ImGui::OpenPopup("##dd");
+    }
+    
+    ImVec4 text = anim_v(id+10, (ImGui::IsItemActive()||hovered||is_open)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
     ImDrawList* d = w->DrawList;
     d->AddRect(drop.Min, drop.Max, ImColor(55,55,66,(int)(st.Alpha*255)), 8);
     // Не рисуем label если он "##..."
     if (label[0] != '#' || label[1] != '#')
         d->AddText(total.Min, ImGui::ColorConvertFloat4ToU32(text), label);
+    // Показываем выбранный элемент
     d->AddText(drop.Min+ImVec2(8,6), ImGui::ColorConvertFloat4ToU32(text), entries[*value].c_str());
     ImVec2 ar(drop.Max.x-14, drop.Min.y+10);
     d->AddTriangleFilled(ar, ImVec2(ar.x+8,ar.y), ImVec2(ar.x+4,ar.y+6), ImGui::ColorConvertFloat4ToU32(text));
-
-    if (open<0.01f) return false;
-    ImGui::SetNextWindowPos(ImVec2(drop.Min.x, drop.Max.y+5*open));
+    
+    if (!is_open) return false;
+    ImGui::SetNextWindowPos(ImVec2(drop.Min.x, drop.Max.y+5));
     ImGui::SetNextWindowSize(ImVec2(drop.GetWidth(),0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,8);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(10,10));
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, open*st.Alpha);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,open*st.Alpha));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,open*st.Alpha));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(10/255.f,14/255.f,21/255.f,1));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(25/255.f,32/255.f,40/255.f,1));
     bool changed = false;
     if (ImGui::BeginPopup("##dd", ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoScrollWithMouse)) {
         for (int i=0;i<(int)entries.size();i++){
-            if (sel_custom(entries[i].c_str(), i==*value) && *value!=i){ changed=true; *value=i; }
+            bool selected = (i == *value);
+            ImGuiID item_id = id + 100 + i;
+            ImVec2 item_size(ImGui::GetContentRegionAvail().x, 24);
+            ImVec2 item_pos = ImGui::GetCursorPos();
+            if (ImGui::InvisibleButton(entries[i].c_str(), item_size)) {
+                *value = i;
+                changed = true;
+                ImGui::CloseCurrentPopup();
+                break;
+            }
+            bool item_hovered = ImGui::IsItemHovered();
+            ImVec4 item_text = anim_v(item_id, (selected||item_hovered)?ImVec4(1,1,1,1):ImVec4(155/255.f,155/255.f,155/255.f,1));
+            ImDrawList* item_d = ImGui::GetWindowDrawList();
+            ImVec2 item_screen = ImGui::GetCursorScreenPos() - item_size;
+            if (item_hovered) item_d->AddRectFilled(item_screen, item_screen+item_size, ImColor(255,255,255,15), 4);
+            if (selected) item_d->AddRect(item_screen, item_screen+item_size, ImColor(234,193,251,180), 4);
+            item_d->AddText(item_screen+ImVec2(8,5), ImGui::ColorConvertFloat4ToU32(item_text), entries[i].c_str());
         }
         if (!ImGui::IsWindowHovered() && ImGui::GetIO().MouseClicked[0]) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
-    ImGui::PopStyleColor(2); ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
     return changed;
 }
 
@@ -355,16 +417,26 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGui::GetStyle().Colors[ImGuiCol_TextSelectedBg]=ImVec4(0,0,0,0);
     ImGui_ImplMetal_Init(self.device);
     self.m_current=0; self.m_sub=0; self.isReady=YES;
-    CGFloat bs=44; self.toggleButton=[UIButton buttonWithType:UIButtonTypeSystem];
-    self.toggleButton.frame=CGRectMake(sc.width-60,40,bs,bs);
-    self.toggleButton.backgroundColor=[UIColor colorWithRed:0.15 green:0.12 blue:0.25 alpha:0.9];
-    self.toggleButton.layer.cornerRadius=22; self.toggleButton.layer.borderWidth=1;
-    self.toggleButton.layer.borderColor=[UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
+    
+    // Кнопка с обводкой и свечением
+    CGFloat bs=48;
+    self.toggleButton=[UIButton buttonWithType:UIButtonTypeSystem];
+    self.toggleButton.frame=CGRectMake(sc.width-70,40,bs,bs);
+    self.toggleButton.backgroundColor=[UIColor colorWithRed:16/255.f green:16/255.f blue:28/255.f alpha:0.95];
+    self.toggleButton.layer.cornerRadius=24;
+    self.toggleButton.layer.borderWidth=1.2;
+    self.toggleButton.layer.borderColor=[UIColor colorWithRed:234/255.f green:193/255.f blue:251/255.f alpha:0.45].CGColor;
+    self.toggleButton.layer.shadowColor=[UIColor colorWithRed:180/255.f green:130/255.f blue:255/255.f alpha:1.0].CGColor;
+    self.toggleButton.layer.shadowOffset=CGSizeZero;
+    self.toggleButton.layer.shadowRadius=10.0f;
+    self.toggleButton.layer.shadowOpacity=0.85f;
+    self.toggleButton.layer.masksToBounds=NO;
     [self.toggleButton setTitle:@"S" forState:UIControlStateNormal];
     [self.toggleButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.toggleButton.titleLabel.font=[UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    self.toggleButton.titleLabel.font=[UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     [self.toggleButton addTarget:self action:@selector(toggleMenu:) forControlEvents:UIControlEventTouchUpInside];
     [kw addSubview:self.toggleButton];
+    
     self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(render)];
     [self.displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
 }
@@ -376,7 +448,10 @@ static AntisocialGUIManager* sharedInst=nil;
     rp.colorAttachments[0].texture=dr.texture; rp.colorAttachments[0].loadAction=MTLLoadActionClear;
     rp.colorAttachments[0].storeAction=MTLStoreActionStore; rp.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);
     ImGui_ImplMetal_NewFrame(rp); ImGui::NewFrame();
-
+    
+    // Вызываем хуки
+    hooks::update();
+    
     static float child_alpha=0.f;
     const float W=620,H=370,left=140,top=40;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
@@ -390,7 +465,7 @@ static AntisocialGUIManager* sharedInst=nil;
         dl->AddRectFilled(wr.Min,wr.Max,ImColor(16,16,28),ImGui::GetStyle().WindowRounding);
         int ve=dl->VtxBuffer.Size;
         ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,vs,ve,wr.Min,wr.Max+ImVec2(600,600),IM_COL32(16,16,28,255),IM_COL32(27,15,61,255));
-
+        
         // ЛЕВЫЙ САЙДБАР
         ImGui::SetCursorPos(ImVec2(0,0));
         ImGui::BeginChild("##left",ImVec2(left,wr.GetHeight()),false);
@@ -427,7 +502,7 @@ static AntisocialGUIManager* sharedInst=nil;
                 float pd=tr.GetHeight()/2-tsz.y/2;
                 dl->AddText(tr.Min+ImVec2(pd*2,pd),ImGui::ColorConvertFloat4ToU32(txt),tabs[it]);
             }
-            // профиль @STANDLEO Premium
+            // профиль
             ImRect child_wr=ImGui::GetCurrentWindow()->Rect();
             ImRect pr=ImRect(ImVec2(child_wr.Min.x+11,child_wr.Max.y-10-38), child_wr.Max-ImVec2(10,10));
             dl->AddRectFilled(pr.Min,pr.Max,ImColor(255,255,255,7),8);
@@ -438,7 +513,7 @@ static AntisocialGUIManager* sharedInst=nil;
             dl->AddText(ImVec2(pr.Min.x+rad*2+12,pr.GetCenter().y-1),ImColor(245,215,66),"Premium");
             ImGui::EndChild();
         }
-
+        
         // ВЕРХНИЕ SUBTABS
         ImGui::SetCursorPos(ImVec2(left,0));
         ImGui::BeginChild("##top",ImVec2(ImGui::GetContentRegionAvail().x,top),false);
@@ -457,14 +532,14 @@ static AntisocialGUIManager* sharedInst=nil;
             }
             ImGui::EndChild();
         }
-
+        
         // разделители
         int s1=dl->VtxBuffer.Size;
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(41,43,55),1);
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55),1);
         int s2=dl->VtxBuffer.Size;
-        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,s1,s2,wr.Min,wr.Max,IM_COL32(41,43,55,255),IM_COL32(21,23,35,255));
-
+        ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl,s1,s2,wr.Min,wr.Max,ImColor(41,43,55),ImColor(21,23,35));
+        
         child_alpha=anim_f(ImGui::GetID("##ca"),1.f,0.15f);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,child_alpha);
         ImGui::SetCursorPos(ImVec2(left+11, top+1+(35*(1-child_alpha))));
@@ -501,10 +576,9 @@ static AntisocialGUIManager* sharedInst=nil;
                 begin_category("Category example"); internal_toggle("Simple switch",&g_simple_switch); end_category();
                 toggle("Another toggle",&g_esp_health,"Lorem ipsum paster sin shluxi",[]{ combo("##combo_hidden",&g_combo,{"First","Second","Third"}); });
             } else if(self.m_current==1){
-                // Status без "ON/OFF" — просто тумблеры
                 begin_category("Status");
-                internal_toggle("Wallbang",&g_wallbang);
-                internal_toggle("NoRecoil",&g_norecoil);
+                internal_toggle("Wallbang",&g_wallbang_status);
+                internal_toggle("NoRecoil",&g_norecoil_status);
                 end_category();
             } else if(self.m_current==2){
                 begin_category("Combo"); combo("##combo_hidden",&g_combo,{"First","Second","Third"}); end_category();
@@ -520,8 +594,8 @@ static AntisocialGUIManager* sharedInst=nil;
         }
         ImGui::PopStyleVar();
         ImGui::PopStyleVar();
-
-        // drag с clamp
+        
+        // drag
         ImVec2 mp=ImGui::GetIO().MousePos;
         bool inBar=(mp.x>=left&&mp.x<=W&&mp.y>=0&&mp.y<=top);
         if(inBar&&ImGui::IsMouseClicked(0)){self.isDragging=YES;self.dragStartPos=CGPointMake(mp.x-self.menuOffset.x,mp.y-self.menuOffset.y);}
@@ -532,7 +606,7 @@ static AntisocialGUIManager* sharedInst=nil;
             self.menuOffset=no;
             self.hostView.frame=CGRectMake(no.x,no.y,W,H);
         } else if(!ImGui::IsMouseDown(0)) self.isDragging=NO;
-
+        
         ImGui::End();
     }
     ImGui::PopStyleVar(2);
