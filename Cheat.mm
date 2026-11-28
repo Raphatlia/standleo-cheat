@@ -28,9 +28,9 @@ static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 static CGPoint g_touchScreenPos = CGPointZero;
 
 #pragma mark - ===== HOOKS / MEMORY =====
-#include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <cstring>
+#include <libkern/OSCacheControl.h>   // ← ДОБАВИТЬ ЭТУ СТРОКУ
 
 namespace hooks {
     static uintptr_t g_base = 0;
