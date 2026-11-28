@@ -28,55 +28,197 @@ static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 static CGPoint g_touchScreenPos = CGPointZero;
 
 #pragma mark - ===== HOOKS / MEMORY =====
+#include <mach/mach.h>
+#include <mach-o/dyld.h>
+#include <cstring>
+
 namespace hooks {
-    static uintptr_t g_base  = 0;
-    static bool      g_ready = false;
+    static uintptr_t g_base = 0;
+    static bool g_ready = false;
+    
+    // ОФСЕТЫ ИЗ DUMP.CS (RVA)
     namespace off {
-        constexpr uintptr_t local_player_ptr = 0x0;
-        constexpr uintptr_t ent_movement     = 0xA8;
-        constexpr uintptr_t mov_translation  = 0x70;
-        constexpr uintptr_t trans_jump       = 0x50;
-        constexpr uintptr_t trans_field      = 0x28;
-        constexpr uintptr_t jump_impulse     = 0xA8;
-        constexpr uintptr_t ent_weapon       = 0x0;
-        constexpr uintptr_t gun_recoil_mult  = 0x0;
+        // PlayerControls.GetKeyboardInputs() -> PlayerInputs*
+        constexpr uintptr_t get_keyboard_inputs = 0x1F081C0;
+        // PlayerControls.GetTouchInputs() -> PlayerInputs*
+        constexpr uintptr_t get_touch_inputs = 0x1F081DC;
+        // PlayerControls.get_Instance() -> PlayerControls*
+        constexpr uintptr_t get_instance = 0x1F061E8;
+        // PlayerControls.get_PlayerController() -> PlayerController*
+        constexpr uintptr_t get_player_controller = 0x1F063A0;
+        
+        // PlayerInputs.IsToJump offset (bool)
+        constexpr uintptr_t is_to_jump = 0x23;
+        // PlayerInputs.IsToFire offset (bool)
+        constexpr uintptr_t is_to_fire = 0x22;
+        
+        // GunController._recoilMult offset (float)
+        constexpr uintptr_t recoil_mult = 0x1A0;
+        // GunController._accuracyMult offset (float)
+        constexpr uintptr_t accuracy_mult = 0x1A4;
+        
+        // AdminPlayerData.IsGodMode (static bool)
+        constexpr uintptr_t admin_is_god_mode = 0x0; // TODO: найти через script.json
     }
+    
+    // Найти base UnityFramework
     static uintptr_t find_base() {
         for (uint32_t i = 0; i < _dyld_image_count(); i++) {
             const char* n = _dyld_get_image_name(i);
             if (n && strstr(n, "UnityFramework"))
                 return (uintptr_t)_dyld_get_image_header(i);
         }
-        return (uintptr_t)_dyld_get_image_header(0);
+        return 0;
     }
-    static bool valid(uintptr_t p) { return p > 0x100000000ull && p < 0x7fffffffffull; }
-    template<typename T> static T sread(uintptr_t a) { return valid(a) ? *(T*)a : T(0); }
-    template<typename T> static bool swrite(uintptr_t a, T v) { if (!valid(a)) return false; *(T*)a = v; return true; }
-    static void write_obscured_float(uintptr_t loc, float value) {
-        if (!valid(loc)) return;
-        int key = *(int*)loc;
-        union { int i; float f; } u; u.f = value;
-        swrite<float>(loc + 0x4, (float)(u.i ^ key));
+    
+    // Проверка валидности указателя
+    static bool valid(uintptr_t p) {
+        return p > 0x100000000ull && p < 0x7fffffffffull;
     }
-    static void init() { if (g_ready) return; g_base = find_base(); g_ready = (g_base != 0); }
-    static uintptr_t local_player() {
-        if (!g_ready || !off::local_player_ptr) return 0;
-        return sread<uintptr_t>(g_base + off::local_player_ptr);
+    
+    // Безопасное чтение
+    template<typename T>
+    static T sread(uintptr_t a) {
+        return valid(a) ? *(T*)a : T(0);
     }
-    static void bunnyhop() {
-        uintptr_t ent = local_player(); if (!ent) return;
-        uintptr_t mov = sread<uintptr_t>(ent + off::ent_movement);    if (!mov) return;
-        uintptr_t tr  = sread<uintptr_t>(mov + off::mov_translation); if (!tr)  return;
-        uintptr_t jp  = sread<uintptr_t>(tr  + off::trans_jump);      if (!jp)  return;
-        swrite<float>(tr + off::trans_field, 999.f);
-        write_obscured_float(jp + off::jump_impulse, 7.9f);
+    
+    // Безопасная запись
+    template<typename T>
+    static bool swrite(uintptr_t a, T v) {
+        if (!valid(a)) return false;
+        vm_protect(mach_task_self(), a & ~4095, 4096, false,
+                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+        *(T*)a = v;
+        return true;
     }
-    static void norecoil() {}
+    
+    // Inline hook для ARM64
+    static bool inline_hook(uintptr_t target, uintptr_t hook, uintptr_t* original) {
+        if (!valid(target)) return false;
+        
+        vm_size_t page_size = 4096;
+        uintptr_t page_start = target & ~(page_size - 1);
+        
+        // Делаем страницу читаемой/записываемой/исполняемой
+        vm_protect(mach_task_self(), page_start, page_size, false,
+                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+        
+        // Сохраняем оригинальные 16 байт
+        uint8_t orig_bytes[32];
+        memcpy(orig_bytes, (void*)target, 16);
+        
+        // Пишем hook: ldr x16, [pc, #8]; br x16; .quad hook_addr
+        uint32_t* code = (uint32_t*)target;
+        code[0] = 0x58000050;  // ldr x16, [pc, #8]
+        code[1] = 0xD61F0200;  // br x16
+        *(uintptr_t*)(code + 2) = hook;
+        
+        // Создаём trampoline (оригинал + переход обратно)
+        uintptr_t tramp = (uintptr_t)malloc(64);
+        memcpy((void*)tramp, orig_bytes, 16);
+        code = (uint32_t*)(tramp + 16);
+        code[0] = 0x58000050;
+        code[1] = 0xD61F0200;
+        *(uintptr_t*)(code + 2) = target + 16;
+        
+        if (original) *original = tramp;
+        
+        // Возвращаем защиту
+        vm_protect(mach_task_self(), page_start, page_size, false,
+                   VM_PROT_READ | VM_PROT_EXECUTE);
+        
+        // Чищим кэш инструкций
+        sys_icache_invalidate((void*)target, 16);
+        sys_icache_invalidate((void*)tramp, 32);
+        
+        return true;
+    }
+    
+    // Тип функции GetInputs
+    typedef void* (*GetInputs_t)(void* player_controls);
+    static GetInputs_t orig_get_keyboard = nullptr;
+    static GetInputs_t orig_get_touch = nullptr;
+    
+    // Хук GetKeyboardInputs
+    static void* hk_get_keyboard(void* player_controls) {
+        void* ret = orig_get_keyboard(player_controls);
+        if (ret) {
+            // BunnyHop: форсим прыжок
+            if (g_bunnyhop) {
+                *(bool*)((uintptr_t)ret + off::is_to_jump) = true;
+            }
+            // Auto Fire: форсим выстрел
+            if (g_wallbang) {
+                *(bool*)((uintptr_t)ret + off::is_to_fire) = true;
+            }
+        }
+        return ret;
+    }
+    
+    // Хук GetTouchInputs
+    static void* hk_get_touch(void* player_controls) {
+        void* ret = orig_get_touch(player_controls);
+        if (ret) {
+            if (g_bunnyhop) {
+                *(bool*)((uintptr_t)ret + off::is_to_jump) = true;
+            }
+            if (g_wallbang) {
+                *(bool*)((uintptr_t)ret + off::is_to_fire) = true;
+            }
+        }
+        return ret;
+    }
+    
+    // NoRecoil: патчим _recoilMult в GunController
+    static void norecoil_patch() {
+        if (!g_norecoil) return;
+        
+        // Получаем PlayerControls.Instance
+        typedef void* (*GetInstance_t)();
+        GetInstance_t get_inst = (GetInstance_t)(g_base + off::get_instance);
+        void* controls = get_inst();
+        if (!controls) return;
+        
+        // Получаем PlayerController
+        typedef void* (*GetPlayerController_t)(void*);
+        GetPlayerController_t get_pc = (GetPlayerController_t)(g_base + off::get_player_controller);
+        void* player = get_pc(controls);
+        if (!player) return;
+        
+        // Находим GunController через PlayerController
+        // offset до weapon_controller нужно найти в dump.cs
+        // Пока заглушка — нужно найти адрес GunController
+        uintptr_t gun = sread<uintptr_t>((uintptr_t)player + 0x358); // примерный offset
+        if (valid(gun)) {
+            swrite<float>(gun + off::recoil_mult, 0.0f);
+            swrite<float>(gun + off::accuracy_mult, 0.0f);
+        }
+    }
+    
+    // Инициализация хуков
+    static void init() {
+        if (g_ready) return;
+        g_base = find_base();
+        g_ready = (g_base != 0);
+        
+        if (g_ready) {
+            // Хукаем GetKeyboardInputs
+            uintptr_t target1 = g_base + off::get_keyboard_inputs;
+            inline_hook(target1, (uintptr_t)hk_get_keyboard, (uintptr_t*)&orig_get_keyboard);
+            
+            // Хукаем GetTouchInputs
+            uintptr_t target2 = g_base + off::get_touch_inputs;
+            inline_hook(target2, (uintptr_t)hk_get_touch, (uintptr_t*)&orig_get_touch);
+        }
+    }
+    
+    // Вызывать каждый кадр
     static void update() {
-        init();
+        if (!g_ready) init();
         if (!g_ready) return;
-        if (g_bunnyhop) bunnyhop();
-        if (g_norecoil) norecoil();
+        
+        // NoRecoil патчится каждый кадр
+        norecoil_patch();
     }
 }
 
