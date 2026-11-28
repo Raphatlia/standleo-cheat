@@ -16,7 +16,7 @@
 #include <cstring>
 
 // ===== Состояния =====
-static bool g_wallbang = true, g_norecoil = true, g_bunnyhop = false;
+static bool g_wallbang = true, g_norecoil = true, g_bunnyhop = false, g_silent_aim = false;
 static bool g_esp_box = true, g_esp_health = true, g_esp_nickname = true;
 static bool g_offscreen = false, g_internal = false;
 static bool g_simple_switch = false, g_auto_strafe = false, g_fast_drop = false;
