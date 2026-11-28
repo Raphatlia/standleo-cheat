@@ -421,26 +421,36 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGuiIO& io=ImGui::GetIO();
     float dt = io.DeltaTime;
 
-    // ===== АНИМАЦИЯ ОТКРЫТИЯ/ЗАКРЫТИЯ =====
+    // ===== АНИМАЦИЯ ОТКРЫТИЯ/ЗАКРЫТИЯ С ЗАТЕМНЕНИЕМ =====
     static float open_anim=0.f;
-    float target_open = self.isMenuVisible ? 1.f : 0.f;
-    open_anim += (target_open - open_anim) * ImClamp(dt/0.22f, 0.f, 1.f);
-    if (open_anim < 0.001f) open_anim = 0.f;
-    if (open_anim > 0.999f) open_anim = 1.f;
+    static float content_dim=1.f;  // затемнение контента (1=яркий, 0=тёмный)
+    static bool closing=false;
 
-    bool should_show = self.isMenuVisible || open_anim > 0.005f;
-    if (self.hostView.hidden == should_show) self.hostView.hidden = !should_show;
+    if (self.isMenuVisible && !closing) {
+        // Открытие: сначала показываем окно, потом контент появляется
+        open_anim += (1.f - open_anim) * ImClamp(dt/0.20f, 0.f, 1.f);
+        content_dim += (1.f - content_dim) * ImClamp(dt/0.15f, 0.f, 1.f);
+        if (open_anim > 0.999f) open_anim = 1.f;
+        if (content_dim > 0.999f) content_dim = 1.f;
+        self.hostView.hidden = NO;
+    } else if (!self.isMenuVisible && open_anim > 0.001f) {
+        // Закрытие: сначала затемняем контент, потом скрываем окно
+        closing = true;
+        content_dim -= content_dim * ImClamp(dt/0.12f, 0.f, 1.f);  // быстрое затемнение
+        if (content_dim < 0.05f) {
+            open_anim -= open_anim * ImClamp(dt/0.08f, 0.f, 1.f);  // потом быстрое скрытие
+        }
+        if (open_anim < 0.001f) {
+            open_anim = 0.f;
+            content_dim = 1.f;
+            closing = false;
+            self.hostView.hidden = YES;
+        }
+    }
+
+    if (open_anim < 0.001f && !self.isMenuVisible) return;
+
     self.hostView.userInteractionEnabled = self.isMenuVisible && open_anim > 0.95f;
-    if (!should_show) return;   // полностью скрыто — не жрём GPU
-
-    // ===== АНИМАЦИЯ КОНТЕНТА (смена вкладки / саб-вкладки / открытие) =====
-    static float content_anim=1.f;
-    static int last_tab=-1, last_sub=-1; static bool last_vis=false;
-    if (self.isMenuVisible && !last_vis) content_anim = 0.f;          // при каждом открытии
-    if (last_tab != self.m_current || last_sub != self.m_sub) content_anim = 0.f;  // при смене вкладок
-    last_tab=self.m_current; last_sub=self.m_sub; last_vis=self.isMenuVisible;
-    content_anim += (1.f - content_anim) * ImClamp(dt/0.18f, 0.f, 1.f);
-    if (content_anim > 0.999f) content_anim = 1.f;
 
     id<CAMetalDrawable> dr=[self.metalLayer nextDrawable]; if(!dr) return;
     MTLRenderPassDescriptor* rp=[MTLRenderPassDescriptor renderPassDescriptor];
@@ -458,7 +468,7 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
     ImGui::Begin("##main",0,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoBringToFrontOnFocus);
     {
-        // общий fade на всё окно (открытие/закрытие)
+        // общий fade на всё окно
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, open_anim);
 
         ImRect wr=ImGui::GetCurrentWindow()->Rect(); ImDrawList* dl=ImGui::GetWindowDrawList();
@@ -536,9 +546,9 @@ static AntisocialGUIManager* sharedInst=nil;
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55,80),1);
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(25,25,35,40),1);
 
-        // ===== КОНТЕНТ: fade + slide при смене вкладок =====
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, content_anim);
-        ImGui::SetCursorPos(ImVec2(left+11, top+10 + (25.0f*(1.0f-content_anim))));
+        // ===== КОНТЕНТ с затемнением при закрытии =====
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, content_dim);
+        ImGui::SetCursorPos(ImVec2(left+11, top+10));
         float availW = W - left - 22;
         float colw = (availW - 10) * 0.5f;
         float colh = H - top - 20;
@@ -546,7 +556,7 @@ static AntisocialGUIManager* sharedInst=nil;
 
         ImGui::BeginChild("##c1",ImVec2(colw,colh),false,ImGuiWindowFlags_NoScrollbar);
         {
-            if(self.m_sub==0){ // GENERAL
+            if(self.m_sub==0){
                 if(self.m_current==0){
                     toggle("Box ESP",&g_esp_box,"With configuration!",[]{ internal_toggle("Internal too?",&g_internal); slider_int("And slider??",&g_slider,-5,5); color("Colorpicker",{&g_col1,&g_col2}); });
                     toggle("Health Bar",&g_esp_health,nullptr);
@@ -565,7 +575,7 @@ static AntisocialGUIManager* sharedInst=nil;
                 } else {
                     begin_category("Configs"); ImGui::TextColored(ImVec4(0.5f,0.5f,0.58f,1),"No configs yet"); end_category();
                 }
-            } else { // ADVANCED
+            } else {
                 if(self.m_current==0){
                     begin_category("Render"); slider_int("Max Distance",&g_slider2,0,500); end_category();
                 } else if(self.m_current==1){
@@ -585,7 +595,7 @@ static AntisocialGUIManager* sharedInst=nil;
         ImGui::SameLine(0,10);
         ImGui::BeginChild("##c2",ImVec2(colw,colh),false,ImGuiWindowFlags_NoScrollbar);
         {
-            if(self.m_sub==0){ // GENERAL
+            if(self.m_sub==0){
                 if(self.m_current==0){
                     begin_category("Category example"); internal_toggle("Simple switch",&g_simple_switch); end_category();
                 } else if(self.m_current==1){
@@ -599,7 +609,7 @@ static AntisocialGUIManager* sharedInst=nil;
                 } else {
                     begin_category("Info"); ImGui::TextColored(ImVec4(0.5f,0.5f,0.58f,1),"Empty"); end_category();
                 }
-            } else { // ADVANCED
+            } else {
                 if(self.m_current==0){
                     begin_category("Visuals Adv"); internal_toggle("Outline",&g_esp_box); end_category();
                 } else if(self.m_current==1){
@@ -616,8 +626,8 @@ static AntisocialGUIManager* sharedInst=nil;
             }
             ImGui::EndChild();
         }
-        ImGui::PopStyleVar();   // ItemSpacing
-        ImGui::PopStyleVar();   // content Alpha
+        ImGui::PopStyleVar();
+        ImGui::PopStyleVar();
 
         // drag
         ImVec2 mp=io.MousePos;
@@ -635,7 +645,7 @@ static AntisocialGUIManager* sharedInst=nil;
             self.hostView.frame=CGRectMake(self.menuOffset.x,self.menuOffset.y,W,H);
         } else if(!ImGui::IsMouseDown(0)) self.isDragging=NO;
 
-        ImGui::PopStyleVar();   // open Alpha
+        ImGui::PopStyleVar();
         ImGui::End();
     }
     ImGui::PopStyleVar(2);
