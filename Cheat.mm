@@ -31,6 +31,7 @@ static CGPoint g_touchScreenPos = CGPointZero;
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <cstring>
+#include <libkern/OSCacheControl.h>  // после #include <cstring>
 
 namespace hooks {
     static uintptr_t g_base = 0;
