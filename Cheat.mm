@@ -26,83 +26,26 @@ static int  g_esp_dist = 150;
 static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 
 static CGPoint g_touchScreenPos = CGPointZero;
-
 #pragma mark - ===== HOOKS / MEMORY =====
 #include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <cstring>
-#include <libkern/OSCacheControl.h>  // после #include <cstring>
 
 namespace hooks {
     static uintptr_t g_base = 0;
     static bool g_ready = false;
     
-    // ОФСЕТЫ ИЗ mega.txt
+    // ОФСЕТЫ ИЗ bhop.txt
     namespace off {
-        // PlayerController.OnFilterInput (virtual, принимает PlayerInputs&)
-        constexpr uintptr_t on_filter_input = 0x209E520;
+        // JumpParameters offsets (из il2cpp.h)
+        constexpr uintptr_t jp_bhop_speed_mult = 0x10;    // bhopSpeedMultiplier
+        constexpr uintptr_t jp_max_bhop_speed = 0x18;     // maxBhopSpeed
+        constexpr uintptr_t jp_min_land_time = 0x1C;      // MinLandTime
+        constexpr uintptr_t jp_bunny_jump_max = 0x2C;     // BunnyJumpMaxSpeed
         
-        // PlayerController.GetSnapshot
-        constexpr uintptr_t get_snapshot = 0x1DF5754;
-        
-        // PlayerController.SetSnapshot
-        constexpr uintptr_t set_snapshot = 0x1DA563C;
-        
-        // PlayerInputs offsets (struct)
-        constexpr uintptr_t is_to_jump = 0x23;
-        constexpr uintptr_t is_to_fire = 0x22;
-        
-        // PlayerController offsets
-        constexpr uintptr_t pc_aim_controller = 0x90;
-        constexpr uintptr_t pc_weaponry = 0x98;
-        constexpr uintptr_t pc_movement = 0xA8;
-        constexpr uintptr_t pc_biped = 0xD0;
-        
-        // AimController offsets
-        constexpr uintptr_t ac_aiming_data = 0x90;
-        
-        // AimingData offsets
-        constexpr uintptr_t ad_cur_aim_angle = 0x18;
-        constexpr uintptr_t ad_cur_euler = 0x24;
-        constexpr uintptr_t ad_gun_sub = 0x40;
-        
-        // GunController offsets
-        constexpr uintptr_t gc_recoil_control = 0x100;
-        
-        // Camera RVA для ESP
-        constexpr uintptr_t cam_world_to_camera = 0x36505F4;
-        constexpr uintptr_t cam_projection = 0x36507AC;
-        
-        // Transform.get_position RVA
-        constexpr uintptr_t transform_get_position = 0x3683040;
-        
-        // NoRecoilAnticheat
-        constexpr uintptr_t norecoil_anticheat = 0x213B8D0;
-        constexpr uintptr_t aimbot_anticheat = 0x2139D8C;
+        // GunController._recoilMult
+        constexpr uintptr_t gc_recoil_mult = 0x1A0;
     }
-    
-    // Struct PlayerInputs (0x38 байт)
-    struct PlayerInputs {
-        float Horizontal;          // 0x10
-        float Vertical;            // 0x14
-        bool IsCrouching;          // 0x18
-        bool IsToReload;           // 0x19
-        int SwitchToWeapon;        // 0x1C
-        bool IsToSwitchToLastWeapon; // 0x20
-        bool IsToAim;              // 0x21
-        bool IsToFire;             // 0x22
-        bool IsToJump;             // 0x23
-        bool IsToDrop;             // 0x24
-        bool IsToAction;           // 0x25
-        bool IsToInspect;          // 0x26
-        bool IsToPickup;           // 0x27
-        // Vector3 AimEulerAngles; // 0x28
-        // Vector2 DeltaAimAngles; // 0x34
-    };
-    
-    struct Vector3 {
-        float x, y, z;
-    };
     
     // Найти base UnityFramework
     static uintptr_t find_base() {
@@ -132,119 +75,68 @@ namespace hooks {
         return true;
     }
     
-    // Inline hook для ARM64
-    static bool inline_hook(uintptr_t target, uintptr_t hook, uintptr_t* original) {
-        if (!valid(target)) return false;
+    // ===== BunnyHop через патч JumpParameters (БЕЗ inline hook!) =====
+    static void bunnyhop_patch() {
+        if (!g_bunnyhop) return;
         
-        vm_size_t page_size = 4096;
-        uintptr_t page_start = target & ~(page_size - 1);
+        // Получаем PlayerController через PlayerControls.Instance
+        // PlayerControls.Instance (static field offset 0x0)
+        uintptr_t controls = sread<uintptr_t>(g_base + 0x0);
+        if (!valid(controls)) return;
         
-        vm_protect(mach_task_self(), page_start, page_size, false,
-                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+        // PlayerControls._playerController (offset 0x28)
+        uintptr_t player = sread<uintptr_t>(controls + 0x28);
+        if (!valid(player)) return;
         
-        uint8_t orig_bytes[32];
-        memcpy(orig_bytes, (void*)target, 16);
+        // PlayerController._movementController (offset 0xA8)
+        uintptr_t movement = sread<uintptr_t>(player + 0xA8);
+        if (!valid(movement)) return;
         
-        uint32_t* code = (uint32_t*)target;
-        code[0] = 0x58000050;
-        code[1] = 0xD61F0200;
-        *(uintptr_t*)(code + 2) = hook;
+        // MovementController._translationParameters (offset нужно найти в il2cpp.h)
+        // Пока используем 0x38 как примерный offset
+        uintptr_t translation = sread<uintptr_t>(movement + 0x38);
+        if (!valid(translation)) return;
         
-        uintptr_t tramp = (uintptr_t)malloc(64);
-        memcpy((void*)tramp, orig_bytes, 16);
-        code = (uint32_t*)(tramp + 16);
-        code[0] = 0x58000050;
-        code[1] = 0xD61F0200;
-        *(uintptr_t*)(code + 2) = target + 16;
+        // TranslationParameters._jumpParameters (offset нужно найти)
+        // Пока используем 0x50 как примерный offset
+        uintptr_t jump_params = sread<uintptr_t>(translation + 0x50);
+        if (!valid(jump_params)) return;
         
-        if (original) *original = tramp;
-        
-        vm_protect(mach_task_self(), page_start, page_size, false,
-                   VM_PROT_READ | VM_PROT_EXECUTE);
-        
-        sys_icache_invalidate((void*)target, 16);
-        sys_icache_invalidate((void*)tramp, 32);
-        
-        return true;
+        // Патчим параметры bunnyhop
+        swrite<float>(jump_params + off::jp_bhop_speed_mult, 1.5f);
+        swrite<float>(jump_params + off::jp_max_bhop_speed, 999.0f);
+        swrite<float>(jump_params + off::jp_min_land_time, 0.0f);
+        swrite<float>(jump_params + off::jp_bunny_jump_max, 999.0f);
     }
     
-    static void nop(uintptr_t addr) {
-        if (!valid(addr)) return;
-        vm_size_t page_size = 4096;
-        uintptr_t page_start = addr & ~(page_size - 1);
-        vm_protect(mach_task_self(), page_start, page_size, false,
-                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-        *(uint32_t*)addr = 0xD503201F;
-        sys_icache_invalidate((void*)addr, 4);
-    }
-    
-    // ===== Хук OnFilterInput (вместо GetKeyboardInputs) =====
-    // Сигнатура: void OnFilterInput(PlayerController* this, PlayerInputs* inputs)
-    typedef void (*OnFilterInput_t)(void* player_controller, void* inputs);
-    static OnFilterInput_t orig_on_filter_input = nullptr;
-    
-    static void hk_on_filter_input(void* player_controller, void* inputs) {
-        // Вызываем оригинал
-        orig_on_filter_input(player_controller, inputs);
+    // ===== NoRecoil через патч _recoilMult (БЕЗ inline hook!) =====
+    static void norecoil_patch() {
+        if (!g_norecoil) return;
         
-        // Модифицируем PlayerInputs (передаётся по ссылке, не sret!)
-        if (inputs) {
-            uintptr_t inp = (uintptr_t)inputs;
-            if (g_bunnyhop) {
-                *(bool*)(inp + off::is_to_jump) = true;
-            }
-            if (g_wallbang) {
-                *(bool*)(inp + off::is_to_fire) = true;
-            }
-        }
-    }
-    
-    // ===== Хук GetSnapshot для silent aim =====
-    typedef void* (*GetSnapshot_t)(void* player_controller);
-    static GetSnapshot_t orig_get_snapshot = nullptr;
-    
-    static void* hk_get_snapshot(void* player_controller) {
-        void* snapshot = orig_get_snapshot(player_controller);
+        uintptr_t controls = sread<uintptr_t>(g_base + 0x0);
+        if (!valid(controls)) return;
         
-        if (snapshot && g_silent_aim) {
-            // Подменяем AimX/AimY в snapshot
-            // AimSnapshot: AimX offset 0x54, AimY offset 0x58
-            // TODO: найти точные offsets из il2cpp.h
-        }
+        uintptr_t player = sread<uintptr_t>(controls + 0x28);
+        if (!valid(player)) return;
         
-        return snapshot;
+        // PlayerController._weaponryController (offset 0x98)
+        uintptr_t weaponry = sread<uintptr_t>(player + 0x98);
+        if (!valid(weaponry)) return;
+        
+        // WeaponryController._currentWeapon (offset 0x90)
+        uintptr_t gun = sread<uintptr_t>(weaponry + 0x90);
+        if (!valid(gun)) return;
+        
+        // Патчим _recoilMult = 0.0f
+        swrite<float>(gun + off::gc_recoil_mult, 0.0f);
     }
     
-    // ===== Обход античитов =====
-    static void bypass_anticheat() {
-        static bool patched = false;
-        if (!patched && g_base) {
-            // NoRecoilAnticheat.OnPreInitialize
-            nop(g_base + off::norecoil_anticheat);
-            // AimbotAntiCheat.OnPreInitialize
-            nop(g_base + off::aimbot_anticheat);
-            patched = true;
-        }
-    }
-    
-    // ===== Инициализация =====
+    // ===== Инициализация (БЕЗ NOP'ов!) =====
     static void init() {
         if (g_ready) return;
         g_base = find_base();
         g_ready = (g_base != 0);
-        
-        if (g_ready) {
-            // Хукаем OnFilterInput (virtual метод)
-            uintptr_t target = g_base + off::on_filter_input;
-            inline_hook(target, (uintptr_t)hk_on_filter_input, (uintptr_t*)&orig_on_filter_input);
-            
-            // Хукаем GetSnapshot для silent aim
-            uintptr_t snap_target = g_base + off::get_snapshot;
-            inline_hook(snap_target, (uintptr_t)hk_get_snapshot, (uintptr_t*)&orig_get_snapshot);
-            
-            // Обходим античиты
-            bypass_anticheat();
-        }
+        // NOP'ы античитов УБРАНЫ — они ломают инициализацию лобби
     }
     
     // ===== Update каждый кадр =====
@@ -252,8 +144,8 @@ namespace hooks {
         if (!g_ready) init();
         if (!g_ready) return;
         
-        // NoRecoil — патчим _recoilMult каждый кадр
-        // TODO: найти GunController через PlayerController и записать 0.0f
+        bunnyhop_patch();
+        norecoil_patch();
     }
 }
 
