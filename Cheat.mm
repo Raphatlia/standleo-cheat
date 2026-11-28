@@ -421,36 +421,25 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGuiIO& io=ImGui::GetIO();
     float dt = io.DeltaTime;
 
-    // ===== АНИМАЦИЯ ОТКРЫТИЯ/ЗАКРЫТИЯ С ЗАТЕМНЕНИЕМ =====
+    // ===== АНИМАЦИЯ 1: ОТКРЫТИЕ/ЗАКРЫТИЕ ОКНА =====
     static float open_anim=0.f;
-    static float content_dim=1.f;  // затемнение контента (1=яркий, 0=тёмный)
-    static bool closing=false;
+    float target_open = self.isMenuVisible ? 1.f : 0.f;
+    open_anim += (target_open - open_anim) * ImClamp(dt/0.18f, 0.f, 1.f);
+    if (open_anim < 0.001f) open_anim = 0.f;
+    if (open_anim > 0.999f) open_anim = 1.f;
 
-    if (self.isMenuVisible && !closing) {
-        // Открытие: сначала показываем окно, потом контент появляется
-        open_anim += (1.f - open_anim) * ImClamp(dt/0.20f, 0.f, 1.f);
-        content_dim += (1.f - content_dim) * ImClamp(dt/0.15f, 0.f, 1.f);
-        if (open_anim > 0.999f) open_anim = 1.f;
-        if (content_dim > 0.999f) content_dim = 1.f;
-        self.hostView.hidden = NO;
-    } else if (!self.isMenuVisible && open_anim > 0.001f) {
-        // Закрытие: сначала затемняем контент, потом скрываем окно
-        closing = true;
-        content_dim -= content_dim * ImClamp(dt/0.12f, 0.f, 1.f);  // быстрое затемнение
-        if (content_dim < 0.05f) {
-            open_anim -= open_anim * ImClamp(dt/0.08f, 0.f, 1.f);  // потом быстрое скрытие
-        }
-        if (open_anim < 0.001f) {
-            open_anim = 0.f;
-            content_dim = 1.f;
-            closing = false;
-            self.hostView.hidden = YES;
-        }
-    }
-
-    if (open_anim < 0.001f && !self.isMenuVisible) return;
-
+    bool should_show = self.isMenuVisible || open_anim > 0.005f;
+    if (self.hostView.hidden == should_show) self.hostView.hidden = !should_show;
     self.hostView.userInteractionEnabled = self.isMenuVisible && open_anim > 0.95f;
+    if (!should_show) return;
+
+    // ===== АНИМАЦИЯ 2: ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК =====
+    static float content_anim=1.f;
+    static int last_tab=-1, last_sub=-1;
+    if (last_tab != self.m_current || last_sub != self.m_sub) content_anim = 0.f;
+    last_tab=self.m_current; last_sub=self.m_sub;
+    content_anim += (1.f - content_anim) * ImClamp(dt/0.18f, 0.f, 1.f);
+    if (content_anim > 0.999f) content_anim = 1.f;
 
     id<CAMetalDrawable> dr=[self.metalLayer nextDrawable]; if(!dr) return;
     MTLRenderPassDescriptor* rp=[MTLRenderPassDescriptor renderPassDescriptor];
@@ -468,7 +457,7 @@ static AntisocialGUIManager* sharedInst=nil;
     ImGui::SetNextWindowPos(ImVec2(0,0), ImGuiCond_Always);
     ImGui::Begin("##main",0,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoBringToFrontOnFocus);
     {
-        // общий fade на всё окно
+        // Анимация открытия/закрытия (всё окно)
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, open_anim);
 
         ImRect wr=ImGui::GetCurrentWindow()->Rect(); ImDrawList* dl=ImGui::GetWindowDrawList();
@@ -546,9 +535,9 @@ static AntisocialGUIManager* sharedInst=nil;
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Max.x,wr.Min.y+top),ImColor(41,43,55,80),1);
         dl->AddLine(ImVec2(wr.Min.x+left,wr.Min.y+top),ImVec2(wr.Min.x+left,wr.Max.y),ImColor(25,25,35,40),1);
 
-        // ===== КОНТЕНТ с затемнением при закрытии =====
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, content_dim);
-        ImGui::SetCursorPos(ImVec2(left+11, top+10));
+        // ===== КОНТЕНТ с анимацией переключения вкладок =====
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, content_anim);
+        ImGui::SetCursorPos(ImVec2(left+11, top+10 + (25.0f*(1.0f-content_anim))));
         float availW = W - left - 22;
         float colw = (availW - 10) * 0.5f;
         float colh = H - top - 20;
@@ -626,8 +615,8 @@ static AntisocialGUIManager* sharedInst=nil;
             }
             ImGui::EndChild();
         }
-        ImGui::PopStyleVar();
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar();   // content_anim
+        ImGui::PopStyleVar();   // ItemSpacing
 
         // drag
         ImVec2 mp=io.MousePos;
@@ -645,7 +634,7 @@ static AntisocialGUIManager* sharedInst=nil;
             self.hostView.frame=CGRectMake(self.menuOffset.x,self.menuOffset.y,W,H);
         } else if(!ImGui::IsMouseDown(0)) self.isDragging=NO;
 
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar();   // open_anim
         ImGui::End();
     }
     ImGui::PopStyleVar(2);
