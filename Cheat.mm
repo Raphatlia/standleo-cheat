@@ -28,38 +28,80 @@ static ImVec4 g_col1 = ImVec4(1,0,0,1), g_col2 = ImVec4(0,1,0,1);
 static CGPoint g_touchScreenPos = CGPointZero;
 
 #pragma mark - ===== HOOKS / MEMORY =====
+#include <mach/mach.h>
 #include <mach-o/dyld.h>
 #include <cstring>
-#include <libkern/OSCacheControl.h>   // ← ДОБАВИТЬ ЭТУ СТРОКУ
 
 namespace hooks {
     static uintptr_t g_base = 0;
     static bool g_ready = false;
     
-    // ОФСЕТЫ ИЗ DUMP.CS (подтверждённые RVA)
+    // ОФСЕТЫ ИЗ mega.txt
     namespace off {
-        // PlayerControls.GetKeyboardInputs() -> PlayerInputs*
-        constexpr uintptr_t get_keyboard_inputs = 0x1F081C0;
-        // PlayerControls.GetTouchInputs() -> PlayerInputs*
-        constexpr uintptr_t get_touch_inputs = 0x1F081DC;
+        // PlayerController.OnFilterInput (virtual, принимает PlayerInputs&)
+        constexpr uintptr_t on_filter_input = 0x209E520;
         
-        // PlayerInputs.IsToJump offset (bool)
+        // PlayerController.GetSnapshot
+        constexpr uintptr_t get_snapshot = 0x1DF5754;
+        
+        // PlayerController.SetSnapshot
+        constexpr uintptr_t set_snapshot = 0x1DA563C;
+        
+        // PlayerInputs offsets (struct)
         constexpr uintptr_t is_to_jump = 0x23;
-        // PlayerInputs.IsToFire offset (bool)
         constexpr uintptr_t is_to_fire = 0x22;
         
-        // GunController._recoilMult offset (float) — из antisocial
-        constexpr uintptr_t recoil_mult = 0x1A0;
+        // PlayerController offsets
+        constexpr uintptr_t pc_aim_controller = 0x90;
+        constexpr uintptr_t pc_weaponry = 0x98;
+        constexpr uintptr_t pc_movement = 0xA8;
+        constexpr uintptr_t pc_biped = 0xD0;
         
-        // NoRecoilAnticheat.OnPreInitialize() RVA
+        // AimController offsets
+        constexpr uintptr_t ac_aiming_data = 0x90;
+        
+        // AimingData offsets
+        constexpr uintptr_t ad_cur_aim_angle = 0x18;
+        constexpr uintptr_t ad_cur_euler = 0x24;
+        constexpr uintptr_t ad_gun_sub = 0x40;
+        
+        // GunController offsets
+        constexpr uintptr_t gc_recoil_control = 0x100;
+        
+        // Camera RVA для ESP
+        constexpr uintptr_t cam_world_to_camera = 0x36505F4;
+        constexpr uintptr_t cam_projection = 0x36507AC;
+        
+        // Transform.get_position RVA
+        constexpr uintptr_t transform_get_position = 0x3683040;
+        
+        // NoRecoilAnticheat
         constexpr uintptr_t norecoil_anticheat = 0x213B8D0;
-        
-        // TODO: найти RVA PlayerController.LateUpdate для antiaim
-        constexpr uintptr_t player_late_update = 0x0;
-        
-        // TODO: найти RVA HitCaster.CastHit для silent aim (класс не найден в дампе)
-        constexpr uintptr_t hit_caster_cast = 0x0;
+        constexpr uintptr_t aimbot_anticheat = 0x2139D8C;
     }
+    
+    // Struct PlayerInputs (0x38 байт)
+    struct PlayerInputs {
+        float Horizontal;          // 0x10
+        float Vertical;            // 0x14
+        bool IsCrouching;          // 0x18
+        bool IsToReload;           // 0x19
+        int SwitchToWeapon;        // 0x1C
+        bool IsToSwitchToLastWeapon; // 0x20
+        bool IsToAim;              // 0x21
+        bool IsToFire;             // 0x22
+        bool IsToJump;             // 0x23
+        bool IsToDrop;             // 0x24
+        bool IsToAction;           // 0x25
+        bool IsToInspect;          // 0x26
+        bool IsToPickup;           // 0x27
+        // Vector3 AimEulerAngles; // 0x28
+        // Vector2 DeltaAimAngles; // 0x34
+    };
+    
+    struct Vector3 {
+        float x, y, z;
+    };
     
     // Найти base UnityFramework
     static uintptr_t find_base() {
@@ -71,9 +113,22 @@ namespace hooks {
         return 0;
     }
     
-    // Проверка валидности указателя
     static bool valid(uintptr_t p) {
         return p > 0x100000000ull && p < 0x7fffffffffull;
+    }
+    
+    template<typename T>
+    static T sread(uintptr_t a) {
+        return valid(a) ? *(T*)a : T(0);
+    }
+    
+    template<typename T>
+    static bool swrite(uintptr_t a, T v) {
+        if (!valid(a)) return false;
+        vm_protect(mach_task_self(), a & ~4095, 4096, false,
+                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+        *(T*)a = v;
+        return true;
     }
     
     // Inline hook для ARM64
@@ -90,8 +145,8 @@ namespace hooks {
         memcpy(orig_bytes, (void*)target, 16);
         
         uint32_t* code = (uint32_t*)target;
-        code[0] = 0x58000050;  // ldr x16, [pc, #8]
-        code[1] = 0xD61F0200;  // br x16
+        code[0] = 0x58000050;
+        code[1] = 0xD61F0200;
         *(uintptr_t*)(code + 2) = hook;
         
         uintptr_t tramp = (uintptr_t)malloc(64);
@@ -112,7 +167,6 @@ namespace hooks {
         return true;
     }
     
-    // NOP для ARM64
     static void nop(uintptr_t addr) {
         if (!valid(addr)) return;
         vm_size_t page_size = 4096;
@@ -123,92 +177,82 @@ namespace hooks {
         sys_icache_invalidate((void*)addr, 4);
     }
     
-    // Тип функции GetInputs
-    typedef void* (*GetInputs_t)(void* player_controls);
-    static GetInputs_t orig_get_keyboard = nullptr;
-    static GetInputs_t orig_get_touch = nullptr;
+    // ===== Хук OnFilterInput (вместо GetKeyboardInputs) =====
+    // Сигнатура: void OnFilterInput(PlayerController* this, PlayerInputs* inputs)
+    typedef void (*OnFilterInput_t)(void* player_controller, void* inputs);
+    static OnFilterInput_t orig_on_filter_input = nullptr;
     
-    // Хук GetKeyboardInputs — BunnyHop + AutoFire
-    static void* hk_get_keyboard(void* player_controls) {
-        void* ret = orig_get_keyboard(player_controls);
-        if (ret) {
-            uintptr_t inputs = (uintptr_t)ret;
+    static void hk_on_filter_input(void* player_controller, void* inputs) {
+        // Вызываем оригинал
+        orig_on_filter_input(player_controller, inputs);
+        
+        // Модифицируем PlayerInputs (передаётся по ссылке, не sret!)
+        if (inputs) {
+            uintptr_t inp = (uintptr_t)inputs;
             if (g_bunnyhop) {
-                *(bool*)(inputs + off::is_to_jump) = true;
+                *(bool*)(inp + off::is_to_jump) = true;
             }
             if (g_wallbang) {
-                *(bool*)(inputs + off::is_to_fire) = true;
+                *(bool*)(inp + off::is_to_fire) = true;
             }
         }
-        return ret;
     }
     
-    // Хук GetTouchInputs — BunnyHop + AutoFire
-    static void* hk_get_touch(void* player_controls) {
-        void* ret = orig_get_touch(player_controls);
-        if (ret) {
-            uintptr_t inputs = (uintptr_t)ret;
-            if (g_bunnyhop) {
-                *(bool*)(inputs + off::is_to_jump) = true;
-            }
-            if (g_wallbang) {
-                *(bool*)(inputs + off::is_to_fire) = true;
-            }
+    // ===== Хук GetSnapshot для silent aim =====
+    typedef void* (*GetSnapshot_t)(void* player_controller);
+    static GetSnapshot_t orig_get_snapshot = nullptr;
+    
+    static void* hk_get_snapshot(void* player_controller) {
+        void* snapshot = orig_get_snapshot(player_controller);
+        
+        if (snapshot && g_silent_aim) {
+            // Подменяем AimX/AimY в snapshot
+            // AimSnapshot: AimX offset 0x54, AimY offset 0x58
+            // TODO: найти точные offsets из il2cpp.h
         }
-        return ret;
+        
+        return snapshot;
     }
     
-    // NoRecoil — заглушка (нужен адрес GunController)
-    static void norecoil_patch() {
-        if (!g_norecoil) return;
-        // TODO: найти GunController через PlayerController и записать 0.0f в _recoilMult (offset 0x1A0)
-    }
-    
-    // Antiaim — заглушка (нужен RVA PlayerController.LateUpdate)
-    static void antiaim_patch() {
-        // TODO: хук LateUpdate, цепочка aim_controller+0x90→aiming_data+0x30/0x38/0x40→+0x1C
-    }
-    
-    // Обход NoRecoilAnticheat — NOP'им OnPreInitialize
+    // ===== Обход античитов =====
     static void bypass_anticheat() {
         static bool patched = false;
         if (!patched && g_base) {
-            uintptr_t target = g_base + off::norecoil_anticheat;
-            nop(target);
+            // NoRecoilAnticheat.OnPreInitialize
+            nop(g_base + off::norecoil_anticheat);
+            // AimbotAntiCheat.OnPreInitialize
+            nop(g_base + off::aimbot_anticheat);
             patched = true;
         }
     }
     
-    // Инициализация хуков
+    // ===== Инициализация =====
     static void init() {
         if (g_ready) return;
         g_base = find_base();
         g_ready = (g_base != 0);
         
         if (g_ready) {
-            // Хукаем GetKeyboardInputs
-            uintptr_t target1 = g_base + off::get_keyboard_inputs;
-            inline_hook(target1, (uintptr_t)hk_get_keyboard, (uintptr_t*)&orig_get_keyboard);
+            // Хукаем OnFilterInput (virtual метод)
+            uintptr_t target = g_base + off::on_filter_input;
+            inline_hook(target, (uintptr_t)hk_on_filter_input, (uintptr_t*)&orig_on_filter_input);
             
-            // Хукаем GetTouchInputs
-            uintptr_t target2 = g_base + off::get_touch_inputs;
-            inline_hook(target2, (uintptr_t)hk_get_touch, (uintptr_t*)&orig_get_touch);
+            // Хукаем GetSnapshot для silent aim
+            uintptr_t snap_target = g_base + off::get_snapshot;
+            inline_hook(snap_target, (uintptr_t)hk_get_snapshot, (uintptr_t*)&orig_get_snapshot);
             
-            // Обходим NoRecoilAnticheat
+            // Обходим античиты
             bypass_anticheat();
         }
     }
     
-    // Вызывать каждый кадр
+    // ===== Update каждый кадр =====
     static void update() {
         if (!g_ready) init();
         if (!g_ready) return;
         
-        // NoRecoil патчится каждый кадр
-        norecoil_patch();
-        
-        // Antiaim (если найдём RVA)
-        antiaim_patch();
+        // NoRecoil — патчим _recoilMult каждый кадр
+        // TODO: найти GunController через PlayerController и записать 0.0f
     }
 }
 
