@@ -36,29 +36,29 @@ namespace hooks {
     static uintptr_t g_base = 0;
     static bool g_ready = false;
     
-    // ОФСЕТЫ ИЗ DUMP.CS (RVA)
+    // ОФСЕТЫ ИЗ DUMP.CS (подтверждённые RVA)
     namespace off {
         // PlayerControls.GetKeyboardInputs() -> PlayerInputs*
         constexpr uintptr_t get_keyboard_inputs = 0x1F081C0;
         // PlayerControls.GetTouchInputs() -> PlayerInputs*
         constexpr uintptr_t get_touch_inputs = 0x1F081DC;
-        // PlayerControls.get_Instance() -> PlayerControls*
-        constexpr uintptr_t get_instance = 0x1F061E8;
-        // PlayerControls.get_PlayerController() -> PlayerController*
-        constexpr uintptr_t get_player_controller = 0x1F063A0;
         
         // PlayerInputs.IsToJump offset (bool)
         constexpr uintptr_t is_to_jump = 0x23;
         // PlayerInputs.IsToFire offset (bool)
         constexpr uintptr_t is_to_fire = 0x22;
         
-        // GunController._recoilMult offset (float)
+        // GunController._recoilMult offset (float) — из antisocial
         constexpr uintptr_t recoil_mult = 0x1A0;
-        // GunController._accuracyMult offset (float)
-        constexpr uintptr_t accuracy_mult = 0x1A4;
         
-        // AdminPlayerData.IsGodMode (static bool)
-        constexpr uintptr_t admin_is_god_mode = 0x0; // TODO: найти через script.json
+        // NoRecoilAnticheat.OnPreInitialize() RVA
+        constexpr uintptr_t norecoil_anticheat = 0x213B8D0;
+        
+        // TODO: найти RVA PlayerController.LateUpdate для antiaim
+        constexpr uintptr_t player_late_update = 0x0;
+        
+        // TODO: найти RVA HitCaster.CastHit для silent aim (класс не найден в дампе)
+        constexpr uintptr_t hit_caster_cast = 0x0;
     }
     
     // Найти base UnityFramework
@@ -76,22 +76,6 @@ namespace hooks {
         return p > 0x100000000ull && p < 0x7fffffffffull;
     }
     
-    // Безопасное чтение
-    template<typename T>
-    static T sread(uintptr_t a) {
-        return valid(a) ? *(T*)a : T(0);
-    }
-    
-    // Безопасная запись
-    template<typename T>
-    static bool swrite(uintptr_t a, T v) {
-        if (!valid(a)) return false;
-        vm_protect(mach_task_self(), a & ~4095, 4096, false,
-                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-        *(T*)a = v;
-        return true;
-    }
-    
     // Inline hook для ARM64
     static bool inline_hook(uintptr_t target, uintptr_t hook, uintptr_t* original) {
         if (!valid(target)) return false;
@@ -99,21 +83,17 @@ namespace hooks {
         vm_size_t page_size = 4096;
         uintptr_t page_start = target & ~(page_size - 1);
         
-        // Делаем страницу читаемой/записываемой/исполняемой
         vm_protect(mach_task_self(), page_start, page_size, false,
                    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
         
-        // Сохраняем оригинальные 16 байт
         uint8_t orig_bytes[32];
         memcpy(orig_bytes, (void*)target, 16);
         
-        // Пишем hook: ldr x16, [pc, #8]; br x16; .quad hook_addr
         uint32_t* code = (uint32_t*)target;
         code[0] = 0x58000050;  // ldr x16, [pc, #8]
         code[1] = 0xD61F0200;  // br x16
         *(uintptr_t*)(code + 2) = hook;
         
-        // Создаём trampoline (оригинал + переход обратно)
         uintptr_t tramp = (uintptr_t)malloc(64);
         memcpy((void*)tramp, orig_bytes, 16);
         code = (uint32_t*)(tramp + 16);
@@ -123,15 +103,24 @@ namespace hooks {
         
         if (original) *original = tramp;
         
-        // Возвращаем защиту
         vm_protect(mach_task_self(), page_start, page_size, false,
                    VM_PROT_READ | VM_PROT_EXECUTE);
         
-        // Чищим кэш инструкций
         sys_icache_invalidate((void*)target, 16);
         sys_icache_invalidate((void*)tramp, 32);
         
         return true;
+    }
+    
+    // NOP для ARM64
+    static void nop(uintptr_t addr) {
+        if (!valid(addr)) return;
+        vm_size_t page_size = 4096;
+        uintptr_t page_start = addr & ~(page_size - 1);
+        vm_protect(mach_task_self(), page_start, page_size, false,
+                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+        *(uint32_t*)addr = 0xD503201F;
+        sys_icache_invalidate((void*)addr, 4);
     }
     
     // Тип функции GetInputs
@@ -139,59 +128,54 @@ namespace hooks {
     static GetInputs_t orig_get_keyboard = nullptr;
     static GetInputs_t orig_get_touch = nullptr;
     
-    // Хук GetKeyboardInputs
+    // Хук GetKeyboardInputs — BunnyHop + AutoFire
     static void* hk_get_keyboard(void* player_controls) {
         void* ret = orig_get_keyboard(player_controls);
         if (ret) {
-            // BunnyHop: форсим прыжок
+            uintptr_t inputs = (uintptr_t)ret;
             if (g_bunnyhop) {
-                *(bool*)((uintptr_t)ret + off::is_to_jump) = true;
+                *(bool*)(inputs + off::is_to_jump) = true;
             }
-            // Auto Fire: форсим выстрел
             if (g_wallbang) {
-                *(bool*)((uintptr_t)ret + off::is_to_fire) = true;
+                *(bool*)(inputs + off::is_to_fire) = true;
             }
         }
         return ret;
     }
     
-    // Хук GetTouchInputs
+    // Хук GetTouchInputs — BunnyHop + AutoFire
     static void* hk_get_touch(void* player_controls) {
         void* ret = orig_get_touch(player_controls);
         if (ret) {
+            uintptr_t inputs = (uintptr_t)ret;
             if (g_bunnyhop) {
-                *(bool*)((uintptr_t)ret + off::is_to_jump) = true;
+                *(bool*)(inputs + off::is_to_jump) = true;
             }
             if (g_wallbang) {
-                *(bool*)((uintptr_t)ret + off::is_to_fire) = true;
+                *(bool*)(inputs + off::is_to_fire) = true;
             }
         }
         return ret;
     }
     
-    // NoRecoil: патчим _recoilMult в GunController
+    // NoRecoil — заглушка (нужен адрес GunController)
     static void norecoil_patch() {
         if (!g_norecoil) return;
-        
-        // Получаем PlayerControls.Instance
-        typedef void* (*GetInstance_t)();
-        GetInstance_t get_inst = (GetInstance_t)(g_base + off::get_instance);
-        void* controls = get_inst();
-        if (!controls) return;
-        
-        // Получаем PlayerController
-        typedef void* (*GetPlayerController_t)(void*);
-        GetPlayerController_t get_pc = (GetPlayerController_t)(g_base + off::get_player_controller);
-        void* player = get_pc(controls);
-        if (!player) return;
-        
-        // Находим GunController через PlayerController
-        // offset до weapon_controller нужно найти в dump.cs
-        // Пока заглушка — нужно найти адрес GunController
-        uintptr_t gun = sread<uintptr_t>((uintptr_t)player + 0x358); // примерный offset
-        if (valid(gun)) {
-            swrite<float>(gun + off::recoil_mult, 0.0f);
-            swrite<float>(gun + off::accuracy_mult, 0.0f);
+        // TODO: найти GunController через PlayerController и записать 0.0f в _recoilMult (offset 0x1A0)
+    }
+    
+    // Antiaim — заглушка (нужен RVA PlayerController.LateUpdate)
+    static void antiaim_patch() {
+        // TODO: хук LateUpdate, цепочка aim_controller+0x90→aiming_data+0x30/0x38/0x40→+0x1C
+    }
+    
+    // Обход NoRecoilAnticheat — NOP'им OnPreInitialize
+    static void bypass_anticheat() {
+        static bool patched = false;
+        if (!patched && g_base) {
+            uintptr_t target = g_base + off::norecoil_anticheat;
+            nop(target);
+            patched = true;
         }
     }
     
@@ -209,6 +193,9 @@ namespace hooks {
             // Хукаем GetTouchInputs
             uintptr_t target2 = g_base + off::get_touch_inputs;
             inline_hook(target2, (uintptr_t)hk_get_touch, (uintptr_t*)&orig_get_touch);
+            
+            // Обходим NoRecoilAnticheat
+            bypass_anticheat();
         }
     }
     
@@ -219,6 +206,9 @@ namespace hooks {
         
         // NoRecoil патчится каждый кадр
         norecoil_patch();
+        
+        // Antiaim (если найдём RVA)
+        antiaim_patch();
     }
 }
 
